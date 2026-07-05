@@ -190,6 +190,14 @@ NetPulse takes cues from tools that feel invisible until you need them — clean
 
 ---
 
+## How It's Built
+
+We're not here to reinvent networking. If there's a great open-source tool that already does something well — a speed test engine, a traceroute visualizer, a packet analyzer — we'll integrate it, credit it, and build on top of it. NetPulse is about the *experience*: stitching the right pieces together into something that feels like one seamless tool, not a loose collection of utilities.
+
+Every dependency will be transparently credited. Good open source deserves recognition.
+
+---
+
 ## Coming Soon
 
 NetPulse is currently in active development. Some advanced features may be offered under a sustainable licensing model, but the core monitoring experience will always be free and open source.
