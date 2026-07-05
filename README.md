@@ -1,2 +1,201 @@
-# NetPulse
-Cross-platform desktop network health monitor for enthusiasts — real-time and historical metrics, speed tests, Wi-Fi diagnostics, bufferbloat detection, and AI-powered insights. Windows + Linux.
+<p align="center">
+  <img src="assets/icon.svg" alt="NetPulse" width="96" height="96" />
+</p>
+
+<h1 align="center">NetPulse</h1>
+
+<p align="center">
+  <strong>Know your network. Inside and out.</strong>
+</p>
+
+<p align="center">
+  A seamless, lightweight desktop monitor that watches your connection in real time<br />
+  and remembers everything — so you don't have to wonder what happened while you were away.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0891b2?style=flat-square" alt="Platforms" />
+  <img src="https://img.shields.io/badge/status-private-inactive?style=flat-square" alt="Status" />
+  <img src="https://img.shields.io/badge/license-coming%20soon-lightgrey?style=flat-square" alt="License" />
+</p>
+
+---
+
+## Why NetPulse?
+
+Most network tools feel like they were built for sysadmins in 2003. NetPulse doesn't.
+
+It watches your connection like a fitness tracker watches your heart — quietly, continuously, and with enough intelligence to tell you when something's off *before* your Zoom call drops. No command-line flags to memorize. No dashboards that look like a spreadsheet had a bad day. Just a clean window that shows you exactly what's happening, right now, and what happened while you were sleeping.
+
+Built for enthusiasts who care about their network, not enterprises with a budget line for "observability."
+
+---
+
+## What It Watches
+
+### Internet Connectivity
+
+The fundamentals. Is the internet actually working?
+
+- **Latency** — Min, average, max. Not just a number — the full picture.
+- **Jitter** — Because consistency matters more than a single good ping.
+- **Packet Loss** — As a percentage. Zero is the only acceptable answer.
+- **Internet Uptime** — Real uptime, measured from your end, not your ISP's claims.
+- **Disconnect Count** — How many times it dropped, and when.
+- **Outage Duration** — Total time you were in the dark.
+- **Time to Reconnect** — How long it actually takes to come back.
+- **IPv4 & IPv6 Connectivity** — Both stacks, independently monitored.
+
+### Speed Tests
+
+Not just "how fast am I right now" — how fast are you *supposed* to be?
+
+- **Download & Upload Speed** — Measured on your terms, on your schedule.
+- **Ping & Jitter During Test** — What happens to latency under load.
+- **Packet Loss Under Load** — The real stress test.
+- **Speed vs. ISP Plan** — Are you getting what you pay for?
+- **Peak Hour vs. Off-Peak** — See when your neighborhood saturates the node.
+- **Full Speed Test History** — Every result, forever, searchable.
+
+### Wi-Fi Metrics
+
+Your wireless connection, dissected.
+
+- **Signal Strength (RSSI)** — In dBm, because bars are meaningless.
+- **Signal Quality** — As a clean percentage.
+- **Link Speed & PHY Rate** — What your adapter negotiated vs. what it's actually getting.
+- **Frequency Band** — 2.4, 5, or 6 GHz. Know which one you're on.
+- **Channel & Channel Width** — And whether your neighbor's router is stomping on yours.
+- **Noise Level** — What's competing with your signal.
+- **Retransmission Rate** — Packets that had to be sent twice. Should be near zero.
+- **Roaming Events** — Every time your device jumped between APs, logged.
+
+### Local Network
+
+Your LAN isn't a black box.
+
+- **Gateway Latency** — How fast your router responds.
+- **LAN Packet Loss** — Internal drops. Shouldn't happen.
+- **Interface Errors & Drops** — Low-level NIC stats that tell the real story.
+- **Connected Device Count** — Who's on your network right now.
+- **Per-Device Bandwidth** — Which device is hogging the pipe.
+- **Top Bandwidth Consumers** — Ranked. Ruthlessly.
+- **Router CPU & Memory** — If your router supports it, NetPulse reads it.
+
+### DNS
+
+Your internet doesn't start until DNS resolves. Watch it.
+
+- **Lookup Time** — Per query, averaged, trended.
+- **Failure Count** — Every DNS failure, logged.
+- **Server Used** — Which resolver answered.
+- **Server Comparison** — Side-by-side speed comparison across resolvers.
+- **Cache Performance** — Hit rates, when available.
+
+### Routing
+
+See the path your packets actually take.
+
+- **Traceroute** — Visual, not a wall of text.
+- **Hop Count** — More hops = more places for things to go wrong.
+- **Per-Hop Latency** — Which hop is the bottleneck.
+- **Route Changes** — Did your path suddenly shift? NetPulse notices.
+- **Packet Loss by Hop** — Pinpoint where the drops happen.
+- **AS/ISP Path** — Who's carrying your packets, hop by hop.
+
+### Bufferbloat
+
+The silent killer of real-time performance.
+
+- **Idle Latency** — Your baseline.
+- **Download Latency Under Load** — How much bufferbloat costs you.
+- **Upload Latency Under Load** — Same, upstream.
+- **Bufferbloat Grade** — A through F. Simple, brutal, honest.
+
+### Reliability
+
+The long view.
+
+- **Daily, Weekly, Monthly Uptime** — Real numbers, not ISP marketing.
+- **Disconnect Frequency** — Patterns emerge over weeks.
+- **Average Outage Length** — And your longest outage. Ever.
+
+### Bandwidth Usage
+
+What's actually moving through your connection.
+
+- **Current Download & Upload Rate** — Live, right now.
+- **Daily, Weekly, Monthly Totals** — Data caps hate this.
+- **Per-Application Breakdown** — Which app is doing what.
+- **Per-Device Breakdown** — Which device is streaming 4K without asking.
+
+### Quality of Experience (QoE)
+
+Numbers are numbers. Scores tell you how it *feels*.
+
+- **Gaming Score** — Latency, jitter, packet loss → one number.
+- **Video Call Score** — Will your next meeting be a disaster?
+- **Streaming Score** — Buffering risk, right now.
+- **Web Browsing Score** — DNS + latency + throughput.
+- **VoIP Score** — Because dropped words ruin conversations.
+
+### Security
+
+Know what's exposed.
+
+- **Open Ports** — What the outside world can see.
+- **Public IP** — Your face to the internet.
+- **NAT Type** — Strict, moderate, or open.
+- **UPnP Status** — On? Off? Should it be?
+- **Firewall Status** — Active and healthy?
+- **VPN Detection** — Are you actually protected right now?
+- **DNS-over-HTTPS/TLS** — Encrypted DNS status check.
+
+### Historical Analytics
+
+Everything above, tracked over time. Not just snapshots — stories.
+
+- **Hourly, Daily, Weekly, Monthly Trends** — Zoom out to see patterns.
+- **Event Timeline** — Every significant event, chronologically.
+- **Incident Log** — What happened, when, for how long.
+- **Exportable Reports** — PDF and CSV. Share with your ISP, your IT person, or your own records.
+
+---
+
+## AI Insights
+
+NetPulse doesn't just collect data — it connects dots.
+
+- **ISP Congestion Detection** — Is your ISP oversubscribed in your area?
+- **Wi-Fi Congestion Detection** — Too many networks on the same channel?
+- **DNS Issue Detection** — Is your resolver the bottleneck?
+- **Bufferbloat Detection** — Automatic, no manual test required.
+- **Device Saturation Detection** — That one device crushing your network.
+- **Automatic Root Cause Analysis** — "Your latency spiked because..."
+- **Performance Trend Analysis** — Is your connection getting worse over time?
+- **Personalized Recommendations** — "Try channel 149" — specific, actionable, correct.
+
+All of this runs locally. Your network data stays on your machine.
+
+---
+
+## Design Philosophy
+
+NetPulse takes cues from tools that feel invisible until you need them — clean, fast, and respectful of your screen real estate.
+
+- **Seamless** — Lives in your system tray. One click to expand.
+- **Lightweight** — Idles at near-zero CPU. Does its work, gets out of the way.
+- **Honest** — Raw numbers when you want them. Simple scores when you don't.
+- **Cross-Platform** — Windows and Linux. Same experience. Same codebase.
+
+---
+
+## Coming Soon
+
+NetPulse is currently in active development. Some advanced features may be offered under a sustainable licensing model, but the core monitoring experience will always be free and open source.
+
+---
+
+<p align="center">
+  <sub>Built for people who want to understand their network, not just complain about it.</sub>
+</p>
