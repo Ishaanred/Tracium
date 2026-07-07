@@ -9,8 +9,8 @@ use std::sync::Mutex;
 
 use netpulse_monitor::{now_ms, Monitor, MonitorConfig, StatusUpdate};
 use netpulse_store::{
-    BandwidthNow, BandwidthTotals, ConnectivitySample, DnsResolverStat, Event, NewTarget, Outage,
-    Reliability, Rollup, SecuritySnapshot, Store, Target, TracerouteView,
+    BandwidthNow, BandwidthTotals, ConnectivitySample, Device, DnsResolverStat, Event, NewTarget,
+    Outage, Reliability, Rollup, SecuritySnapshot, Store, Target, TracerouteView,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -99,6 +99,12 @@ async fn bandwidth_totals(
 ) -> Result<BandwidthTotals, String> {
     let since = now_ms() - window_secs * 1000;
     state.store.bandwidth_totals(since).await.map_err(|e| e.to_string())
+}
+
+/// Known LAN devices (most-recently-seen first).
+#[tauri::command]
+async fn devices(state: State<'_, AppState>) -> Result<Vec<Device>, String> {
+    state.store.list_devices().await.map_err(|e| e.to_string())
 }
 
 /// The most recent traceroute with its hops, if any.
@@ -219,6 +225,7 @@ pub fn run() {
             bandwidth_totals,
             security_status,
             latest_traceroute,
+            devices,
             recent_events,
             recent_outages,
             export_csv

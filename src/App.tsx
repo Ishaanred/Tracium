@@ -59,6 +59,13 @@ interface Security {
   open_ports: string | null;
 }
 
+interface LanDevice {
+  id: number;
+  mac: string | null;
+  ip: string | null;
+  hostname: string | null;
+}
+
 interface TraceHop {
   hop_no: number;
   ip: string | null;
@@ -119,6 +126,7 @@ export default function App() {
   const [bwTotal, setBwTotal] = useState<BandwidthTotals | null>(null);
   const [security, setSecurity] = useState<Security | null>(null);
   const [trace, setTrace] = useState<Traceroute | null>(null);
+  const [devices, setDevices] = useState<LanDevice[]>([]);
   const [targets, setTargets] = useState<Target[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
@@ -142,6 +150,7 @@ export default function App() {
       .catch(() => {});
     invoke<Security | null>("security_status").then(setSecurity).catch(() => {});
     invoke<Traceroute | null>("latest_traceroute").then(setTrace).catch(() => {});
+    invoke<LanDevice[]>("devices").then(setDevices).catch(() => {});
   };
 
   const doExport = (kind: "connectivity" | "events") => {
@@ -286,6 +295,23 @@ export default function App() {
                 <span className="targets__kind">
                   {d.failures > 0 ? `${d.failures} fail` : `${d.count} ok`}
                 </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="card">
+        <h2>Devices on network{devices.length ? ` · ${devices.length}` : ""}</h2>
+        {devices.length === 0 ? (
+          <p className="status">No devices discovered yet.</p>
+        ) : (
+          <ul className="targets">
+            {devices.map((d) => (
+              <li key={d.id}>
+                <strong>{d.ip ?? "?"}</strong>
+                <span className="targets__host">{d.mac ?? ""}</span>
+                {d.hostname && <span className="targets__kind">{d.hostname}</span>}
               </li>
             ))}
           </ul>

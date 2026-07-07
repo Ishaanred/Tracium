@@ -17,10 +17,12 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 pub mod bandwidth;
+pub mod devices;
 pub mod dns;
 pub mod netinfo;
 pub mod security;
 pub mod traceroute;
+pub use devices::{discover_devices, ArpEntry};
 pub use bandwidth::{BandwidthSample, BandwidthSampler};
 pub use dns::{dns_lookup, DnsResult};
 pub use netinfo::public_ip;

@@ -364,6 +364,45 @@ impl Store {
         Ok(BandwidthTotals { rx_bytes: rx, tx_bytes: tx })
     }
 
+    /// Insert or refresh a LAN device seen at `now` (keyed by MAC).
+    pub async fn upsert_device(&self, mac: &str, ip: &str, now: i64) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO local_devices (mac, ip, first_seen, last_seen, is_active) \
+             VALUES (?, ?, ?, ?, 1) \
+             ON CONFLICT(mac) DO UPDATE SET ip = excluded.ip, last_seen = excluded.last_seen, \
+                is_active = 1",
+        )
+        .bind(mac)
+        .bind(ip)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Count devices seen since `since` (i.e. currently active).
+    pub async fn active_device_count(&self, since: i64) -> Result<i64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM local_devices WHERE last_seen >= ?",
+        )
+        .bind(since)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(n)
+    }
+
+    /// All known devices, most-recently-seen first.
+    pub async fn list_devices(&self) -> Result<Vec<Device>> {
+        let rows = sqlx::query_as::<_, Device>(
+            "SELECT id, mac, hostname, ip, vendor, first_seen, last_seen, is_active \
+             FROM local_devices ORDER BY last_seen DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     /// Save a traceroute (parent + hops) and return the new traceroute id.
     pub async fn save_traceroute(
         &self,
@@ -819,6 +858,19 @@ pub struct ConnectivitySample {
     pub up: bool,
 }
 
+/// A discovered LAN device.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct Device {
+    pub id: i64,
+    pub mac: Option<String>,
+    pub hostname: Option<String>,
+    pub ip: Option<String>,
+    pub vendor: Option<String>,
+    pub first_seen: i64,
+    pub last_seen: i64,
+    pub is_active: bool,
+}
+
 /// A traceroute hop to persist.
 #[derive(Debug, Clone)]
 pub struct TracerouteHop {
@@ -1088,6 +1140,24 @@ mod tests {
         let totals = store.bandwidth_totals(0).await.unwrap();
         assert_eq!(totals.rx_bytes, 4_000);
         assert_eq!(totals.tx_bytes, 600);
+    }
+
+    #[tokio::test]
+    async fn devices_upsert_and_count() {
+        let store = Store::open_in_memory().await.unwrap();
+        store.upsert_device("aa:bb:cc:dd:ee:ff", "192.168.1.1", 1000).await.unwrap();
+        store.upsert_device("11:22:33:44:55:66", "192.168.1.42", 1000).await.unwrap();
+        // Same MAC again with a new IP + time -> updates, not duplicates.
+        store.upsert_device("aa:bb:cc:dd:ee:ff", "192.168.1.2", 2000).await.unwrap();
+
+        assert_eq!(store.list_devices().await.unwrap().len(), 2);
+        assert_eq!(store.active_device_count(0).await.unwrap(), 2);
+        assert_eq!(store.active_device_count(1500).await.unwrap(), 1, "only the refreshed one");
+
+        let devices = store.list_devices().await.unwrap();
+        // Most-recently-seen first.
+        assert_eq!(devices[0].mac.as_deref(), Some("aa:bb:cc:dd:ee:ff"));
+        assert_eq!(devices[0].ip.as_deref(), Some("192.168.1.2"));
     }
 
     #[tokio::test]

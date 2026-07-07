@@ -12,7 +12,9 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use netpulse_probe::security::{check_doh, check_dot, detect_vpn, firewall_active, scan_local_ports, COMMON_PORTS};
-use netpulse_probe::{dns_lookup, probe, public_ip, traceroute, BandwidthSampler, ProbeConfig};
+use netpulse_probe::{
+    discover_devices, dns_lookup, probe, public_ip, traceroute, BandwidthSampler, ProbeConfig,
+};
 use netpulse_store::{NewConnectivitySample, SecuritySnapshot, Store, StoreError, TracerouteHop};
 
 /// Resolvers compared on the DNS cadence (label, IP).
@@ -47,6 +49,8 @@ pub struct MonitorConfig {
     pub security_interval: Duration,
     /// Timeout for individual security probes (DoH/DoT).
     pub security_timeout: Duration,
+    /// How often to enumerate LAN devices.
+    pub devices_interval: Duration,
     /// How often to run a traceroute.
     pub traceroute_interval: Duration,
     /// Traceroute target + limits.
@@ -68,6 +72,7 @@ impl Default for MonitorConfig {
             public_ip_timeout: Duration::from_secs(5),
             security_interval: Duration::from_secs(300),
             security_timeout: Duration::from_secs(4),
+            devices_interval: Duration::from_secs(60),
             traceroute_interval: Duration::from_secs(600),
             traceroute_target: "1.1.1.1".to_string(),
             traceroute_max_hops: 30,
@@ -220,6 +225,14 @@ impl Monitor {
         Ok(())
     }
 
+    /// Enumerate LAN devices from the ARP cache and upsert them.
+    pub async fn sample_devices(&self, now: i64) -> Result<(), StoreError> {
+        for entry in discover_devices().await {
+            self.store.upsert_device(&entry.mac, &entry.ip, now).await?;
+        }
+        Ok(())
+    }
+
     /// Run a traceroute to the configured target, persist it, and emit a
     /// `route_change` event if the path differs from the previous run.
     pub async fn sample_traceroute(&self, now: i64) -> Result<(), StoreError> {
@@ -335,6 +348,7 @@ impl Monitor {
         let mut last_pubip = 0i64;
         let mut last_security = 0i64;
         let mut last_trace = 0i64;
+        let mut last_devices = 0i64;
         let mut bandwidth = BandwidthSampler::new();
 
         let mut ticker = tokio::time::interval(self.config.interval);
@@ -343,6 +357,7 @@ impl Monitor {
         let pubip_ms = self.config.public_ip_interval.as_millis() as i64;
         let security_ms = self.config.security_interval.as_millis() as i64;
         let trace_ms = self.config.traceroute_interval.as_millis() as i64;
+        let devices_ms = self.config.devices_interval.as_millis() as i64;
         loop {
             ticker.tick().await;
             let now = now_ms();
@@ -387,6 +402,12 @@ impl Monitor {
                 }
                 last_trace = now;
             }
+            if now - last_devices >= devices_ms {
+                if let Err(e) = self.sample_devices(now).await {
+                    eprintln!("netpulse device discovery failed: {e}");
+                }
+                last_devices = now;
+            }
             if now - last_maint >= maint_ms {
                 if let Err(e) = self.store.maintain(now).await {
                     eprintln!("netpulse maintenance failed: {e}");
@@ -425,6 +446,7 @@ mod tests {
             public_ip_timeout: Duration::from_millis(300),
             security_interval: Duration::from_secs(300),
             security_timeout: Duration::from_millis(300),
+            devices_interval: Duration::from_secs(60),
             traceroute_interval: Duration::from_secs(600),
             traceroute_target: "1.1.1.1".to_string(),
             traceroute_max_hops: 30,
