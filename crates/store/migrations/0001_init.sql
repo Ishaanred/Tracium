@@ -286,18 +286,22 @@ CREATE INDEX IF NOT EXISTS ix_qoe_ts ON qoe_scores(ts);
 CREATE TABLE IF NOT EXISTS metric_rollups (
     id        INTEGER PRIMARY KEY,
     metric    TEXT NOT NULL,            -- 'latency', 'loss', 'download_mbps', ...
+    target_id INTEGER NOT NULL DEFAULT 0, -- 0 = global aggregate; else targets(id).
+                                        -- NOT nullable on purpose: SQLite treats
+                                        -- each NULL as distinct, which would break
+                                        -- the one-row-per-bucket UNIQUE guarantee.
     bucket    TEXT NOT NULL,            -- 'hour' | 'day' | 'week' | 'month'
     bucket_ts INTEGER NOT NULL,         -- start of the bucket
     count     INTEGER NOT NULL,
     min       REAL,
     avg       REAL,
     max       REAL,
-    p50       REAL,
-    p95       REAL,
+    p50       REAL,                     -- median; computed exactly at rollup time
+    p95       REAL,                     -- headline "when it's bad, how bad" value
     sum       REAL,
-    UNIQUE(metric, bucket, bucket_ts)
+    UNIQUE(metric, target_id, bucket, bucket_ts)
 ) STRICT;
-CREATE INDEX IF NOT EXISTS ix_rollup_metric_bucket ON metric_rollups(metric, bucket, bucket_ts);
+CREATE INDEX IF NOT EXISTS ix_rollup_lookup ON metric_rollups(metric, target_id, bucket, bucket_ts);
 
 -- ---------------------------------------------------------------------------
 -- AI insights -- locally-generated findings & recommendations.

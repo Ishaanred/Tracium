@@ -114,10 +114,29 @@ detector    ──▶ events / outages / ai_insights (retained, drive the timeli
 - **Retention/rollup parameters** live in `settings` so they're tunable without a
   migration.
 
-## Open questions
+## Settings (defaults, all user-editable)
 
-1. Default raw-sample retention — 7 days, or expose as a first-run choice?
-2. Do we need per-target rollups (per resolver, per traceroute target), or is a
-   single global series per metric enough for v1? (Leaning: global for v1.)
-3. Percentiles in rollups (`p50`/`p95`) require either keeping samples until the
-   bucket closes or a streaming estimator — decide before wiring the aggregation job.
+Stored in the `settings` table (JSON values), seeded on first run:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `retention.raw_days` | `7` | Days of full-resolution raw samples to keep before pruning to rollups. Lower it for a smaller footprint. |
+| `rollups.global_enabled` | `true` | Compute the global (`target_id = 0`) series per metric. |
+| `rollups.per_target_enabled` | `false` | Also compute one series per target/resolver. Opt-in — more rows, more detail. |
+
+A manual **"Clear history"** action (a command, not schema) lets the user wipe
+stored samples/rollups for a fresh scan — useful after moving house, changing
+ISP, or debugging.
+
+## Resolved decisions
+
+1. **Raw-sample retention** — default **7 days**, editable via `retention.raw_days`,
+   plus a manual clear-history action.
+2. **Rollup scope** — support **both** global and per-target series in one table via
+   `metric_rollups.target_id` (`0` = global), gated by the two `rollups.*` flags.
+   Global on by default; per-target opt-in.
+3. Percentiles — keep `p50` and `p95`,
+   computed **exactly** at rollup time. Buckets are small (~720 samples/hour) and
+   raw samples are still present when the hourly job runs, so we sort and pick the
+   exact percentile — no streaming estimator (t-digest etc.) needed. `p95` is the
+   headline "when it's bad, how bad" number for latency/jitter.

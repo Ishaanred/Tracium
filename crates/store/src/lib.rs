@@ -234,6 +234,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rollup_bucket_is_unique_per_series() {
+        let store = Store::open_in_memory().await.unwrap();
+        let insert = |target_id: i64| {
+            sqlx::query(
+                "INSERT INTO metric_rollups (metric, target_id, bucket, bucket_ts, count) \
+                 VALUES ('latency', ?, 'hour', 0, 1)",
+            )
+            .bind(target_id)
+            .execute(store.pool())
+        };
+        // First global (target_id=0) row for this bucket: fine.
+        insert(0).await.unwrap();
+        // Second global row for the SAME bucket must be rejected. This is why
+        // target_id defaults to 0 rather than NULL (NULLs would each be unique).
+        assert!(insert(0).await.is_err(), "duplicate global bucket must collide");
+        // A per-target series for the same bucket is a distinct row: allowed.
+        insert(1).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn file_db_roundtrips() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("netpulse.db");
