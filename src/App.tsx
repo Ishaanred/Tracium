@@ -35,6 +35,13 @@ interface NetEvent {
   duration_ms: number | null;
 }
 
+interface DnsStat {
+  resolver: string;
+  avg_ms: number | null;
+  count: number;
+  failures: number;
+}
+
 interface Reliability {
   samples: number;
   up_samples: number;
@@ -67,6 +74,7 @@ export default function App() {
   const [rel, setRel] = useState<Reliability | null>(null);
   const [history, setHistory] = useState<Rollup[]>([]);
   const [events, setEvents] = useState<NetEvent[]>([]);
+  const [dns, setDns] = useState<DnsStat[]>([]);
   const [targets, setTargets] = useState<Target[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
@@ -82,6 +90,7 @@ export default function App() {
       .then(setHistory)
       .catch(() => {});
     invoke<NetEvent[]>("recent_events", { limit: 20 }).then(setEvents).catch(() => {});
+    invoke<DnsStat[]>("dns_comparison", { windowSecs: DAY_SECS }).then(setDns).catch(() => {});
   };
 
   const doExport = (kind: "connectivity" | "events") => {
@@ -175,6 +184,25 @@ export default function App() {
           </div>
         ) : (
           <p className="status">Gathering data…</p>
+        )}
+      </section>
+
+      <section className="card">
+        <h2>DNS resolvers — last 24h</h2>
+        {dns.length === 0 ? (
+          <p className="status">No DNS samples yet.</p>
+        ) : (
+          <ul className="targets">
+            {dns.map((d) => (
+              <li key={d.resolver}>
+                <strong>{d.resolver}</strong>
+                <span className="targets__host">{fmtMs(d.avg_ms)} avg</span>
+                <span className="targets__kind">
+                  {d.failures > 0 ? `${d.failures} fail` : `${d.count} ok`}
+                </span>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 

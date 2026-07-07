@@ -11,8 +11,14 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use netpulse_probe::{probe, ProbeConfig};
+use netpulse_probe::{dns_lookup, probe, ProbeConfig};
 use netpulse_store::{NewConnectivitySample, Store, StoreError};
+
+/// Resolvers compared on the DNS cadence (label, IP).
+const DNS_RESOLVERS: &[(&str, &str)] =
+    &[("Cloudflare", "1.1.1.1"), ("Google", "8.8.8.8"), ("Quad9", "9.9.9.9")];
+/// Hostnames rotated through so we don't hammer one name (and dodge caching).
+const DNS_HOSTS: &[&str] = &["example.com", "wikipedia.org", "github.com", "cloudflare.com"];
 
 pub mod qoe;
 pub use qoe::Qoe;
@@ -28,6 +34,10 @@ pub struct MonitorConfig {
     pub probe: ProbeConfig,
     /// How often to run rollups + retention pruning.
     pub maintenance_interval: Duration,
+    /// How often to sample DNS resolvers.
+    pub dns_interval: Duration,
+    /// Per-lookup DNS timeout.
+    pub dns_timeout: Duration,
 }
 
 impl Default for MonitorConfig {
@@ -37,6 +47,8 @@ impl Default for MonitorConfig {
             port: 443,
             probe: ProbeConfig::default(),
             maintenance_interval: Duration::from_secs(3600),
+            dns_interval: Duration::from_secs(60),
+            dns_timeout: Duration::from_secs(3),
         }
     }
 }
@@ -152,6 +164,20 @@ impl Monitor {
         })
     }
 
+    /// Probe each comparison resolver once for a rotating hostname, persisting
+    /// results to `dns_samples`. Cheap enough to run on its own slow cadence.
+    pub async fn sample_dns(&self, now: i64) -> Result<(), StoreError> {
+        let host = DNS_HOSTS[((now / 60_000) as usize) % DNS_HOSTS.len()];
+        for (_, ip) in DNS_RESOLVERS {
+            let Ok(addr) = ip.parse() else { continue };
+            let r = dns_lookup(addr, host, self.config.dns_timeout).await;
+            self.store
+                .insert_dns_sample(now, &r.resolver, &r.query_host, r.lookup_ms, r.success, None)
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Open an outage when everything drops, close it when anything recovers.
     async fn update_outage(&self, now: i64, online: bool, all_down: bool) -> Result<(), StoreError> {
         let open = self.store.current_open_outage().await?;
@@ -178,9 +204,11 @@ impl Monitor {
             eprintln!("netpulse initial maintenance failed: {e}");
         }
         let mut last_maint = now_ms();
+        let mut last_dns = 0i64; // 0 => sample DNS on the first cycle
 
         let mut ticker = tokio::time::interval(self.config.interval);
         let maint_ms = self.config.maintenance_interval.as_millis() as i64;
+        let dns_ms = self.config.dns_interval.as_millis() as i64;
         loop {
             ticker.tick().await;
             let now = now_ms();
@@ -196,6 +224,12 @@ impl Monitor {
                     // A transient DB error shouldn't kill monitoring.
                     eprintln!("netpulse monitor tick failed: {e}");
                 }
+            }
+            if now - last_dns >= dns_ms {
+                if let Err(e) = self.sample_dns(now).await {
+                    eprintln!("netpulse dns sample failed: {e}");
+                }
+                last_dns = now;
             }
             if now - last_maint >= maint_ms {
                 if let Err(e) = self.store.maintain(now).await {
@@ -229,6 +263,8 @@ mod tests {
                 ip_version: None,
             },
             maintenance_interval: Duration::from_secs(3600),
+            dns_interval: Duration::from_secs(60),
+            dns_timeout: Duration::from_millis(300),
         }
     }
 

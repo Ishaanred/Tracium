@@ -16,6 +16,9 @@ use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+pub mod dns;
+pub use dns::{dns_lookup, DnsResult};
+
 /// How to run one probe cycle against a target.
 #[derive(Debug, Clone)]
 pub struct ProbeConfig {

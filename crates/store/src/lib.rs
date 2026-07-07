@@ -311,6 +311,47 @@ impl Store {
         Ok(())
     }
 
+    /// Record one DNS lookup result.
+    pub async fn insert_dns_sample(
+        &self,
+        ts: i64,
+        resolver: &str,
+        query_host: &str,
+        lookup_ms: Option<f64>,
+        success: bool,
+        cached: Option<bool>,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO dns_samples (ts, resolver, query_host, lookup_ms, success, cached) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(ts)
+        .bind(resolver)
+        .bind(query_host)
+        .bind(lookup_ms)
+        .bind(success as i64)
+        .bind(cached.map(|c| c as i64))
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Per-resolver DNS performance since `since`, fastest average first.
+    pub async fn dns_comparison(&self, since: i64) -> Result<Vec<DnsResolverStat>> {
+        let rows = sqlx::query_as::<_, DnsResolverStat>(
+            "SELECT resolver, \
+                    avg(lookup_ms) AS avg_ms, \
+                    count(*) AS count, \
+                    sum(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failures \
+             FROM dns_samples WHERE ts >= ? \
+             GROUP BY resolver ORDER BY avg_ms",
+        )
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     /// Record a QoE score row.
     pub async fn insert_qoe(
         &self,
@@ -600,6 +641,15 @@ pub struct ConnectivitySample {
     pub up: bool,
 }
 
+/// Aggregated DNS performance for one resolver over a window.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct DnsResolverStat {
+    pub resolver: String,
+    pub avg_ms: Option<f64>,
+    pub count: i64,
+    pub failures: i64,
+}
+
 /// A discrete recorded event (disconnect, reconnect, roam, ...).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct Event {
@@ -781,6 +831,25 @@ mod tests {
         store.seed_default_targets(0).await.unwrap();
         let targets = store.list_targets().await.unwrap();
         assert_eq!(targets.len(), 3, "seeding twice should not duplicate");
+    }
+
+    #[tokio::test]
+    async fn dns_samples_and_comparison() {
+        let store = Store::open_in_memory().await.unwrap();
+        // Cloudflare: 10ms, 20ms (avg 15). Google: 30ms + 1 failure.
+        store.insert_dns_sample(1, "1.1.1.1", "example.com", Some(10.0), true, None).await.unwrap();
+        store.insert_dns_sample(2, "1.1.1.1", "example.com", Some(20.0), true, None).await.unwrap();
+        store.insert_dns_sample(3, "8.8.8.8", "example.com", Some(30.0), true, None).await.unwrap();
+        store.insert_dns_sample(4, "8.8.8.8", "example.com", None, false, None).await.unwrap();
+
+        let cmp = store.dns_comparison(0).await.unwrap();
+        assert_eq!(cmp.len(), 2);
+        // Fastest average first -> Cloudflare.
+        assert_eq!(cmp[0].resolver, "1.1.1.1");
+        assert_eq!(cmp[0].avg_ms, Some(15.0));
+        assert_eq!(cmp[0].failures, 0);
+        assert_eq!(cmp[1].resolver, "8.8.8.8");
+        assert_eq!(cmp[1].failures, 1);
     }
 
     #[tokio::test]

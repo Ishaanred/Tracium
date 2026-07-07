@@ -9,7 +9,8 @@ use std::sync::Mutex;
 
 use netpulse_monitor::{now_ms, Monitor, MonitorConfig, StatusUpdate};
 use netpulse_store::{
-    ConnectivitySample, Event, NewTarget, Outage, Reliability, Rollup, Store, Target,
+    ConnectivitySample, DnsResolverStat, Event, NewTarget, Outage, Reliability, Rollup, Store,
+    Target,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -82,6 +83,16 @@ async fn metric_history(
 ) -> Result<Vec<Rollup>, String> {
     let since = now_ms() - window_secs * 1000;
     state.store.rollups(&metric, &bucket, since).await.map_err(|e| e.to_string())
+}
+
+/// Per-resolver DNS comparison over the last `window_secs` seconds.
+#[tauri::command]
+async fn dns_comparison(
+    state: State<'_, AppState>,
+    window_secs: i64,
+) -> Result<Vec<DnsResolverStat>, String> {
+    let since = now_ms() - window_secs * 1000;
+    state.store.dns_comparison(since).await.map_err(|e| e.to_string())
 }
 
 /// Recent events (the timeline), newest first.
@@ -168,6 +179,7 @@ pub fn run() {
             reliability,
             recent_connectivity,
             metric_history,
+            dns_comparison,
             recent_events,
             recent_outages,
             export_csv
