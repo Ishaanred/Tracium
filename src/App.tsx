@@ -47,6 +47,15 @@ interface NetEvent {
   duration_ms: number | null;
 }
 
+interface Outage {
+  id: number;
+  ts_start: number;
+  ts_end: number | null;
+  duration_ms: number | null;
+  reconnect_ms: number | null;
+  cause: string | null;
+}
+
 interface DnsStat {
   resolver: string;
   avg_ms: number | null;
@@ -162,6 +171,13 @@ function fmtBytes(b: number | null | undefined): string {
   if (gb >= 1) return `${gb.toFixed(2)} GB`;
   return `${(b / 1e6).toFixed(1)} MB`;
 }
+function fmtDur(ms: number | null | undefined): string {
+  if (ms == null) return "ongoing";
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(0)}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+  return `${(s / 3600).toFixed(1)}h`;
+}
 
 export default function App() {
   const [status, setStatus] = useState<StatusUpdate | null>(null);
@@ -170,6 +186,8 @@ export default function App() {
   const [history, setHistory] = useState<Rollup[]>([]);
   const [targetStatus, setTargetStatus] = useState<TargetStatus[]>([]);
   const [events, setEvents] = useState<NetEvent[]>([]);
+  const [outages, setOutages] = useState<Outage[]>([]);
+  const [speedHistory, setSpeedHistory] = useState<Speedtest[]>([]);
   const [dns, setDns] = useState<DnsStat[]>([]);
   const [publicIp, setPublicIp] = useState<string | null>(null);
   const [bw, setBw] = useState<BandwidthNow | null>(null);
@@ -240,9 +258,13 @@ export default function App() {
     invoke<Traceroute | null>("latest_traceroute").then(setTrace).catch(() => {});
     invoke<LanDevice[]>("devices").then(setDevices).catch(() => {});
     invoke<Wifi | null>("wifi").then(setWifi).catch(() => {});
-    invoke<Speedtest[]>("speedtest_history", { limit: 1 })
-      .then((h) => h[0] && setSpeed(h[0]))
+    invoke<Speedtest[]>("speedtest_history", { limit: 10 })
+      .then((h) => {
+        setSpeedHistory(h);
+        if (h[0]) setSpeed(h[0]);
+      })
       .catch(() => {});
+    invoke<Outage[]>("recent_outages", { limit: 20 }).then(setOutages).catch(() => {});
   };
 
   const doExport = (kind: "connectivity" | "events") => {
@@ -371,6 +393,19 @@ export default function App() {
           </div>
         )}
         {speedMsg && <p className="status">{speedMsg}</p>}
+        {speedHistory.length > 1 && (
+          <ul className="events" style={{ marginTop: 12 }}>
+            {speedHistory.map((s) => (
+              <li key={s.ts}>
+                <span className="events__kind">
+                  {(s.download_mbps ?? 0).toFixed(0)}↓ / {(s.upload_mbps ?? 0).toFixed(0)}↑ Mbps
+                </span>
+                <span className="events__dur">{fmtMs(s.ping_ms)}</span>
+                <span className="events__time">{new Date(s.ts).toLocaleString()}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="card">
@@ -609,6 +644,35 @@ export default function App() {
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      <section className="card">
+        <CardTitle
+          title="Incident log"
+          info="Every internet outage (all targets unreachable), with how long it lasted and how long it took to reconnect."
+        />
+        {outages.length === 0 ? (
+          <p className="status status--ok">No outages recorded. 🎉</p>
+        ) : (
+          <>
+            <p className="status" style={{ marginBottom: 10, fontSize: 12 }}>
+              longest outage:{" "}
+              {fmtDur(Math.max(...outages.map((o) => o.duration_ms ?? 0)))} · {outages.length} total
+            </p>
+            <ul className="events">
+              {outages.map((o) => (
+                <li key={o.id}>
+                  <span className={`dot dot--${o.ts_end == null ? "critical" : "warn"}`} aria-hidden />
+                  <span className="events__kind">{fmtDur(o.duration_ms)}</span>
+                  {o.reconnect_ms != null && (
+                    <span className="events__dur">recovered in {fmtDur(o.reconnect_ms)}</span>
+                  )}
+                  <span className="events__time">{new Date(o.ts_start).toLocaleString()}</span>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </section>
 
