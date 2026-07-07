@@ -8,7 +8,9 @@
 use std::sync::Mutex;
 
 use netpulse_monitor::{now_ms, Monitor, MonitorConfig, StatusUpdate};
-use netpulse_store::{ConnectivitySample, NewTarget, Reliability, Rollup, Store, Target};
+use netpulse_store::{
+    ConnectivitySample, Event, NewTarget, Outage, Reliability, Rollup, Store, Target,
+};
 use tauri::{Emitter, Manager, State};
 
 /// Shared application state handed to every command.
@@ -82,6 +84,45 @@ async fn metric_history(
     state.store.rollups(&metric, &bucket, since).await.map_err(|e| e.to_string())
 }
 
+/// Recent events (the timeline), newest first.
+#[tauri::command]
+async fn recent_events(state: State<'_, AppState>, limit: i64) -> Result<Vec<Event>, String> {
+    state.store.recent_events(limit).await.map_err(|e| e.to_string())
+}
+
+/// Recent outages (the incident log), newest first.
+#[tauri::command]
+async fn recent_outages(state: State<'_, AppState>, limit: i64) -> Result<Vec<Outage>, String> {
+    state.store.recent_outages(limit).await.map_err(|e| e.to_string())
+}
+
+/// Export `kind` ("connectivity" | "events") over `window_secs` to a CSV file
+/// in the user's Downloads dir (falling back to the app data dir). Returns the
+/// written path. No external plugin/dialog required.
+#[tauri::command]
+async fn export_csv(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    kind: String,
+    window_secs: i64,
+) -> Result<String, String> {
+    let since = now_ms() - window_secs * 1000;
+    let csv = match kind.as_str() {
+        "events" => state.store.export_events_csv(since).await,
+        _ => state.store.export_connectivity_csv(since).await,
+    }
+    .map_err(|e| e.to_string())?;
+
+    let dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().app_data_dir())
+        .map_err(|e| e.to_string())?;
+    let path = dir.join(format!("netpulse-{kind}.csv"));
+    std::fs::write(&path, csv).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -126,7 +167,10 @@ pub fn run() {
             current_status,
             reliability,
             recent_connectivity,
-            metric_history
+            metric_history,
+            recent_events,
+            recent_outages,
+            export_csv
         ])
         .run(tauri::generate_context!())
         .expect("error while running NetPulse");

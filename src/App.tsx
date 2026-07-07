@@ -27,6 +27,14 @@ interface Rollup {
   p95: number | null;
 }
 
+interface NetEvent {
+  id: number;
+  ts: number;
+  kind: string;
+  severity: string;
+  duration_ms: number | null;
+}
+
 interface Reliability {
   samples: number;
   up_samples: number;
@@ -58,8 +66,10 @@ export default function App() {
   const [status, setStatus] = useState<StatusUpdate | null>(null);
   const [rel, setRel] = useState<Reliability | null>(null);
   const [history, setHistory] = useState<Rollup[]>([]);
+  const [events, setEvents] = useState<NetEvent[]>([]);
   const [targets, setTargets] = useState<Target[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
 
   // Refresh derived summaries (called on mount + after each status tick).
   const refreshDerived = () => {
@@ -71,6 +81,13 @@ export default function App() {
     })
       .then(setHistory)
       .catch(() => {});
+    invoke<NetEvent[]>("recent_events", { limit: 20 }).then(setEvents).catch(() => {});
+  };
+
+  const doExport = (kind: "connectivity" | "events") => {
+    invoke<string>("export_csv", { kind, windowSecs: 7 * DAY_SECS })
+      .then((path) => setExportMsg(`Saved ${kind} CSV → ${path}`))
+      .catch((e) => setExportMsg(String(e)));
   };
 
   useEffect(() => {
@@ -159,6 +176,39 @@ export default function App() {
         ) : (
           <p className="status">Gathering data…</p>
         )}
+      </section>
+
+      <section className="card">
+        <h2>Event timeline</h2>
+        {events.length === 0 ? (
+          <p className="status">No events yet.</p>
+        ) : (
+          <ul className="events">
+            {events.map((e) => (
+              <li key={e.id}>
+                <span className={`dot dot--${e.severity}`} aria-hidden />
+                <span className="events__kind">{e.kind}</span>
+                {e.duration_ms != null && (
+                  <span className="events__dur">{(e.duration_ms / 1000).toFixed(0)}s</span>
+                )}
+                <span className="events__time">{new Date(e.ts).toLocaleString()}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="card">
+        <h2>Export</h2>
+        <div className="row">
+          <button className="btn" onClick={() => doExport("connectivity")}>
+            Connectivity CSV
+          </button>
+          <button className="btn" onClick={() => doExport("events")}>
+            Events CSV
+          </button>
+        </div>
+        {exportMsg && <p className="status status--ok">{exportMsg}</p>}
       </section>
 
       <section className="card">

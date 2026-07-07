@@ -192,6 +192,87 @@ impl Store {
         Ok(rows)
     }
 
+    /// Most recent events, newest first (the Event Timeline).
+    pub async fn recent_events(&self, limit: i64) -> Result<Vec<Event>> {
+        let rows = sqlx::query_as::<_, Event>(
+            "SELECT id, ts, kind, severity, duration_ms, payload \
+             FROM events ORDER BY ts DESC, id DESC LIMIT ?",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Most recent outages, newest first (the Incident Log).
+    pub async fn recent_outages(&self, limit: i64) -> Result<Vec<Outage>> {
+        let rows = sqlx::query_as::<_, Outage>(
+            "SELECT id, ts_start, ts_end, duration_ms, reconnect_ms, cause \
+             FROM outages ORDER BY ts_start DESC LIMIT ?",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// CSV export of connectivity samples with `ts >= since`.
+    pub async fn export_connectivity_csv(&self, since: i64) -> Result<String> {
+        let rows = sqlx::query_as::<_, ConnectivitySample>(
+            "SELECT id, ts, target_id, ip_version, sent, received, loss_pct, \
+                    rtt_min, rtt_avg, rtt_max, rtt_jitter, up \
+             FROM connectivity_samples WHERE ts >= ? ORDER BY ts",
+        )
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut out = String::from(
+            "ts,target_id,ip_version,sent,received,loss_pct,rtt_min,rtt_avg,rtt_max,rtt_jitter,up\n",
+        );
+        for r in rows {
+            let opt = |v: Option<f64>| v.map(|x| x.to_string()).unwrap_or_default();
+            out.push_str(&format!(
+                "{},{},{},{},{},{},{},{},{},{},{}\n",
+                r.ts,
+                r.target_id,
+                r.ip_version,
+                r.sent,
+                r.received,
+                r.loss_pct,
+                opt(r.rtt_min),
+                opt(r.rtt_avg),
+                opt(r.rtt_max),
+                opt(r.rtt_jitter),
+                r.up as i64,
+            ));
+        }
+        Ok(out)
+    }
+
+    /// CSV export of events with `ts >= since`.
+    pub async fn export_events_csv(&self, since: i64) -> Result<String> {
+        let rows = self
+            .recent_events(i64::MAX)
+            .await?
+            .into_iter()
+            .filter(|e| e.ts >= since)
+            .collect::<Vec<_>>();
+
+        let mut out = String::from("ts,kind,severity,duration_ms,payload\n");
+        for r in rows.iter().rev() {
+            out.push_str(&format!(
+                "{},{},{},{},{}\n",
+                r.ts,
+                csv_field(&r.kind),
+                csv_field(&r.severity),
+                r.duration_ms.map(|d| d.to_string()).unwrap_or_default(),
+                csv_field(r.payload.as_deref().unwrap_or("")),
+            ));
+        }
+        Ok(out)
+    }
+
     /// The currently-open outage (no `ts_end`), if the internet is down now.
     pub async fn current_open_outage(&self) -> Result<Option<Outage>> {
         let row = sqlx::query_as::<_, Outage>(
@@ -458,6 +539,15 @@ impl Store {
     }
 }
 
+/// Quote a CSV field if it contains a comma, quote, or newline (RFC 4180).
+fn csv_field(s: &str) -> String {
+    if s.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
 /// Exact percentile (linear interpolation) over an already-sorted slice.
 fn percentile(sorted: &[f64], p: f64) -> f64 {
     match sorted.len() {
@@ -508,6 +598,17 @@ pub struct ConnectivitySample {
     pub rtt_max: Option<f64>,
     pub rtt_jitter: Option<f64>,
     pub up: bool,
+}
+
+/// A discrete recorded event (disconnect, reconnect, roam, ...).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct Event {
+    pub id: i64,
+    pub ts: i64,
+    pub kind: String,
+    pub severity: String,
+    pub duration_ms: Option<i64>,
+    pub payload: Option<String>,
 }
 
 /// A recorded (possibly ongoing) internet outage.
@@ -732,6 +833,61 @@ mod tests {
         assert_eq!(r.up_samples, 3);
         assert_eq!(r.uptime_pct, 75.0);
         assert_eq!(r.avg_latency_ms, Some(20.0));
+    }
+
+    #[test]
+    fn csv_field_escapes_specials() {
+        assert_eq!(csv_field("plain"), "plain");
+        assert_eq!(csv_field("a,b"), "\"a,b\"");
+        assert_eq!(csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
+    }
+
+    #[tokio::test]
+    async fn events_timeline_and_csv() {
+        let store = Store::open_in_memory().await.unwrap();
+        store.insert_event(100, "disconnect", "critical", None, None).await.unwrap();
+        store
+            .insert_event(200, "reconnect", "info", Some(3000), Some(r#"{"note":"a,b"}"#))
+            .await
+            .unwrap();
+
+        let events = store.recent_events(10).await.unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].ts, 200, "newest first");
+        assert_eq!(events[0].kind, "reconnect");
+
+        let csv = store.export_events_csv(0).await.unwrap();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines[0], "ts,kind,severity,duration_ms,payload");
+        // Oldest first in export; payload with a comma must be quoted.
+        assert!(lines[1].starts_with("100,disconnect,critical,,"));
+        assert!(lines[2].contains("\"{\"\"note\"\":\"\"a,b\"\"}\""), "got: {}", lines[2]);
+    }
+
+    #[tokio::test]
+    async fn connectivity_csv_has_header_and_rows() {
+        let store = Store::open_in_memory().await.unwrap();
+        store.seed_default_targets(0).await.unwrap();
+        store
+            .insert_connectivity_sample(NewConnectivitySample {
+                ts: 500,
+                target_id: 1,
+                ip_version: 4,
+                sent: 5,
+                received: 5,
+                loss_pct: 0.0,
+                rtt_min: Some(10.0),
+                rtt_avg: Some(12.0),
+                rtt_max: Some(15.0),
+                rtt_jitter: Some(1.0),
+                up: true,
+            })
+            .await
+            .unwrap();
+        let csv = store.export_connectivity_csv(0).await.unwrap();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].starts_with("500,1,4,5,5,0"));
     }
 
     #[tokio::test]
