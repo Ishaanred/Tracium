@@ -10,6 +10,7 @@ description = "NetPulse connectivity probing: unprivileged TCP-connect latency/j
 tokio = { workspace = true }
 hickory-resolver = "0.24"
 ureq = "2"
+sysinfo = { version = "0.32", default-features = false, features = ["network"] }
 
 [dev-dependencies]
 tokio = { workspace = true }

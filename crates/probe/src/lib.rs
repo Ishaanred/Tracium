@@ -16,8 +16,10 @@ use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+pub mod bandwidth;
 pub mod dns;
 pub mod netinfo;
+pub use bandwidth::{BandwidthSample, BandwidthSampler};
 pub use dns::{dns_lookup, DnsResult};
 pub use netinfo::public_ip;
 

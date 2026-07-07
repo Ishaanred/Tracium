@@ -9,8 +9,8 @@ use std::sync::Mutex;
 
 use netpulse_monitor::{now_ms, Monitor, MonitorConfig, StatusUpdate};
 use netpulse_store::{
-    ConnectivitySample, DnsResolverStat, Event, NewTarget, Outage, Reliability, Rollup, Store,
-    Target,
+    BandwidthNow, BandwidthTotals, ConnectivitySample, DnsResolverStat, Event, NewTarget, Outage,
+    Reliability, Rollup, Store, Target,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -83,6 +83,22 @@ async fn metric_history(
 ) -> Result<Vec<Rollup>, String> {
     let since = now_ms() - window_secs * 1000;
     state.store.rollups(&metric, &bucket, since).await.map_err(|e| e.to_string())
+}
+
+/// The latest aggregate bandwidth rate, if any.
+#[tauri::command]
+async fn bandwidth_now(state: State<'_, AppState>) -> Result<Option<BandwidthNow>, String> {
+    state.store.latest_bandwidth().await.map_err(|e| e.to_string())
+}
+
+/// Total bytes transferred over the last `window_secs` seconds.
+#[tauri::command]
+async fn bandwidth_totals(
+    state: State<'_, AppState>,
+    window_secs: i64,
+) -> Result<BandwidthTotals, String> {
+    let since = now_ms() - window_secs * 1000;
+    state.store.bandwidth_totals(since).await.map_err(|e| e.to_string())
 }
 
 /// The most recently observed public IP, if known.
@@ -187,6 +203,8 @@ pub fn run() {
             metric_history,
             dns_comparison,
             public_ip,
+            bandwidth_now,
+            bandwidth_totals,
             recent_events,
             recent_outages,
             export_csv

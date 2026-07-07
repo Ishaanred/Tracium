@@ -11,7 +11,7 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use netpulse_probe::{dns_lookup, probe, public_ip, ProbeConfig};
+use netpulse_probe::{dns_lookup, probe, public_ip, BandwidthSampler, ProbeConfig};
 use netpulse_store::{NewConnectivitySample, Store, StoreError};
 
 /// Resolvers compared on the DNS cadence (label, IP).
@@ -184,6 +184,25 @@ impl Monitor {
         Ok(())
     }
 
+    /// Persist one bandwidth reading: the aggregate rate plus per-interface
+    /// byte deltas (for usage totals). The sampler is owned by the caller
+    /// because it holds counter state across cycles.
+    pub async fn record_bandwidth(
+        &self,
+        now: i64,
+        sample: netpulse_probe::BandwidthSample,
+    ) -> Result<(), StoreError> {
+        self.store
+            .insert_bandwidth_sample(now, sample.rx_bps as i64, sample.tx_bps as i64)
+            .await?;
+        for iface in &sample.per_iface {
+            self.store
+                .insert_interface_bytes(now, &iface.iface, iface.rx_bytes as i64, iface.tx_bytes as i64)
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Check the public IP (blocking HTTP off the async runtime), persist a
     /// snapshot, and log a `public_ip_change` event when it differs from the
     /// last known value.
@@ -233,6 +252,7 @@ impl Monitor {
         let mut last_maint = now_ms();
         let mut last_dns = 0i64; // 0 => sample on the first cycle
         let mut last_pubip = 0i64;
+        let mut bandwidth = BandwidthSampler::new();
 
         let mut ticker = tokio::time::interval(self.config.interval);
         let maint_ms = self.config.maintenance_interval.as_millis() as i64;
@@ -253,6 +273,10 @@ impl Monitor {
                     // A transient DB error shouldn't kill monitoring.
                     eprintln!("netpulse monitor tick failed: {e}");
                 }
+            }
+            // Bandwidth every cycle (cheap; rate is over the tick interval).
+            if let Err(e) = self.record_bandwidth(now, bandwidth.sample()).await {
+                eprintln!("netpulse bandwidth sample failed: {e}");
             }
             if now - last_dns >= dns_ms {
                 if let Err(e) = self.sample_dns(now).await {

@@ -311,6 +311,59 @@ impl Store {
         Ok(())
     }
 
+    /// Record the aggregate bandwidth rate for a cycle.
+    pub async fn insert_bandwidth_sample(&self, ts: i64, rx_bps: i64, tx_bps: i64) -> Result<()> {
+        sqlx::query("INSERT INTO bandwidth_samples (ts, rx_bps, tx_bps) VALUES (?, ?, ?)")
+            .bind(ts)
+            .bind(rx_bps)
+            .bind(tx_bps)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Record per-interface byte deltas (used for usage totals).
+    pub async fn insert_interface_bytes(
+        &self,
+        ts: i64,
+        iface: &str,
+        rx_bytes: i64,
+        tx_bytes: i64,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO interface_samples (ts, iface, rx_bytes, tx_bytes) VALUES (?, ?, ?, ?)",
+        )
+        .bind(ts)
+        .bind(iface)
+        .bind(rx_bytes)
+        .bind(tx_bytes)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// The latest aggregate bandwidth rate, if any.
+    pub async fn latest_bandwidth(&self) -> Result<Option<BandwidthNow>> {
+        let row = sqlx::query_as::<_, BandwidthNow>(
+            "SELECT ts, rx_bps, tx_bps FROM bandwidth_samples ORDER BY ts DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Total bytes transferred (summed over interfaces) since `since`.
+    pub async fn bandwidth_totals(&self, since: i64) -> Result<BandwidthTotals> {
+        let (rx, tx): (i64, i64) = sqlx::query_as(
+            "SELECT coalesce(sum(rx_bytes), 0), coalesce(sum(tx_bytes), 0) \
+             FROM interface_samples WHERE ts >= ?",
+        )
+        .bind(since)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(BandwidthTotals { rx_bytes: rx, tx_bytes: tx })
+    }
+
     /// Record a security snapshot carrying the public IP.
     pub async fn insert_public_ip(&self, ts: i64, ip: Option<&str>) -> Result<()> {
         sqlx::query("INSERT INTO security_snapshots (ts, public_ip) VALUES (?, ?)")
@@ -662,6 +715,21 @@ pub struct ConnectivitySample {
     pub up: bool,
 }
 
+/// Latest aggregate bandwidth rate (bits/sec).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct BandwidthNow {
+    pub ts: i64,
+    pub rx_bps: i64,
+    pub tx_bps: i64,
+}
+
+/// Total bytes transferred over a window.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BandwidthTotals {
+    pub rx_bytes: i64,
+    pub tx_bytes: i64,
+}
+
 /// Aggregated DNS performance for one resolver over a window.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct DnsResolverStat {
@@ -852,6 +920,25 @@ mod tests {
         store.seed_default_targets(0).await.unwrap();
         let targets = store.list_targets().await.unwrap();
         assert_eq!(targets.len(), 3, "seeding twice should not duplicate");
+    }
+
+    #[tokio::test]
+    async fn bandwidth_rate_and_totals() {
+        let store = Store::open_in_memory().await.unwrap();
+        assert!(store.latest_bandwidth().await.unwrap().is_none());
+
+        store.insert_bandwidth_sample(100, 8_000_000, 1_000_000).await.unwrap();
+        store.insert_bandwidth_sample(200, 16_000_000, 2_000_000).await.unwrap();
+        store.insert_interface_bytes(100, "eth0", 1_000, 200).await.unwrap();
+        store.insert_interface_bytes(200, "eth0", 3_000, 400).await.unwrap();
+
+        let now = store.latest_bandwidth().await.unwrap().unwrap();
+        assert_eq!(now.ts, 200);
+        assert_eq!(now.rx_bps, 16_000_000);
+
+        let totals = store.bandwidth_totals(0).await.unwrap();
+        assert_eq!(totals.rx_bytes, 4_000);
+        assert_eq!(totals.tx_bytes, 600);
     }
 
     #[tokio::test]

@@ -42,6 +42,15 @@ interface DnsStat {
   failures: number;
 }
 
+interface BandwidthNow {
+  rx_bps: number;
+  tx_bps: number;
+}
+interface BandwidthTotals {
+  rx_bytes: number;
+  tx_bytes: number;
+}
+
 interface Reliability {
   samples: number;
   up_samples: number;
@@ -68,6 +77,17 @@ function fmtMs(v: number | null | undefined): string {
 function fmtPct(v: number | null | undefined): string {
   return v == null ? "—" : `${v.toFixed(1)}%`;
 }
+function fmtRate(bps: number | null | undefined): string {
+  if (bps == null) return "—";
+  const mbps = bps / 1e6;
+  return mbps >= 1 ? `${mbps.toFixed(1)} Mbps` : `${(bps / 1e3).toFixed(0)} kbps`;
+}
+function fmtBytes(b: number | null | undefined): string {
+  if (b == null) return "—";
+  const gb = b / 1e9;
+  if (gb >= 1) return `${gb.toFixed(2)} GB`;
+  return `${(b / 1e6).toFixed(1)} MB`;
+}
 
 export default function App() {
   const [status, setStatus] = useState<StatusUpdate | null>(null);
@@ -76,6 +96,8 @@ export default function App() {
   const [events, setEvents] = useState<NetEvent[]>([]);
   const [dns, setDns] = useState<DnsStat[]>([]);
   const [publicIp, setPublicIp] = useState<string | null>(null);
+  const [bw, setBw] = useState<BandwidthNow | null>(null);
+  const [bwTotal, setBwTotal] = useState<BandwidthTotals | null>(null);
   const [targets, setTargets] = useState<Target[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
@@ -93,6 +115,10 @@ export default function App() {
     invoke<NetEvent[]>("recent_events", { limit: 20 }).then(setEvents).catch(() => {});
     invoke<DnsStat[]>("dns_comparison", { windowSecs: DAY_SECS }).then(setDns).catch(() => {});
     invoke<string | null>("public_ip").then(setPublicIp).catch(() => {});
+    invoke<BandwidthNow | null>("bandwidth_now").then(setBw).catch(() => {});
+    invoke<BandwidthTotals>("bandwidth_totals", { windowSecs: DAY_SECS })
+      .then(setBwTotal)
+      .catch(() => {});
   };
 
   const doExport = (kind: "connectivity" | "events") => {
@@ -189,6 +215,16 @@ export default function App() {
         ) : (
           <p className="status">Gathering data…</p>
         )}
+      </section>
+
+      <section className="card">
+        <h2>Bandwidth</h2>
+        <div className="grid">
+          <Stat label="Download" value={fmtRate(bw?.rx_bps)} hint="live" />
+          <Stat label="Upload" value={fmtRate(bw?.tx_bps)} hint="live" />
+          <Stat label="Down today" value={fmtBytes(bwTotal?.rx_bytes)} />
+          <Stat label="Up today" value={fmtBytes(bwTotal?.tx_bytes)} />
+        </div>
       </section>
 
       <section className="card">

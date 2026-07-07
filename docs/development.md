@@ -71,17 +71,20 @@ the zero-setup promise. Timing the TCP handshake to a known-open port (443 on
 1.1.1.1 / 8.8.8.8) needs no privileges, is identical on Windows and Linux, and
 is a stable signal for latency/jitter/loss.
 
-- `netpulse-probe` — one probe cycle = N TCP connects; aggregates min/avg/max
-  RTT, jitter (mean consecutive-diff), and loss. No DB/GUI deps → unit-tested
-  with local sockets (`cargo test -p netpulse-probe`; real-internet smoke test
-  behind `--ignored`).
+- `netpulse-probe` — measurement, no DB/GUI deps. Modules:
+  - connectivity (TCP-connect RTT/jitter/loss),
+  - `dns` (time a lookup against a specific resolver, `hickory-resolver`),
+  - `netinfo` (public IP via HTTP, `ureq`),
+  - `bandwidth` (interface byte-rate + per-iface deltas, `sysinfo`).
+  Unit-tested with local sockets; real-internet checks behind `--ignored`.
 - `netpulse-monitor` — samples every enabled internet target on an interval,
   writes `connectivity_samples`, and opens/closes `outages` (internet is "down"
   only when *every* target fails a cycle). Emits a `status` event to the UI.
   Also runs **maintenance** hourly: rolls up latency/loss/jitter into
   `metric_rollups` (exact p50/p95) and prunes raw samples past
   `retention.raw_days`. Computes **QoE scores** (`qoe.rs`) each cycle from
-  latency/jitter/loss and persists them to `qoe_scores`.
+  latency/jitter/loss. On their own cadences it samples **DNS** resolvers
+  (60s), the **public IP** (10min), and **bandwidth** (every cycle).
 
 ## Database
 
