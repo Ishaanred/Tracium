@@ -33,64 +33,102 @@ no new dependency (reuses our TCP-connect approach). Low friction, high coverage
 
 ---
 
-## Speed test + bufferbloat — ⚠ unverified
+## Traceroute / routing — ✓ verified (cleanest complex win)
 
-- **librespeed-cli** (Go binary, LGPL-3.0) — bundle & invoke; download/upload/ping/jitter, self-hostable servers. LGPL is fine as a separate binary.
-- **Cloudflare speed endpoints** (`speed.cloudflare.com`) — no dependency; download/upload chunks over HTTP with our existing client, measure latency-under-load ourselves for the bufferbloat grade. Most "integrate-friendly" but more of our own code.
-- **`crusader`** (Rust) — network tester incl. bufferbloat; verify license + whether a library crate.
-- **IETF `goresponsiveness`** (Go, Apache-2.0) — the standardized "responsiveness under load" metric.
+- **`trippy-core`** (Rust library crate, **Apache-2.0**, active) — ICMP/UDP/TCP
+  traceroute, RTT, **per-hop packet loss**, reverse DNS, MPLS, NAT detection, and
+  **ASN lookup built in** (default Team Cymru DNS; optional MaxMind/IPinfo).
+  Supports an **unprivileged mode** (some probe types may still need admin/root).
+- One dependency covers hop count, per-hop latency, packet-loss-by-hop, route
+  changes (hash the hop list), and AS/ISP path.
 
-**Tentative pick:** Cloudflare endpoints for a no-dep v1 (throughput + under-load
-latency → bufferbloat grade), keep librespeed-cli as an optional engine. *Confirm
-crusader's license/crate status before choosing it.*
+**Pick:** **`trippy-core`** + Team Cymru DNS for ASN. Single permissive library
+crate for the entire routing domain — do this first among the unverified areas.
 
-## Traceroute / routing — ⚠ unverified
+## Wi-Fi metrics — ✓ verified
 
-- **`trippy` / `trippy-core`** (Rust, believed dual MIT/Apache) — traceroute + mtr-style per-hop latency/loss **and** ASN lookup (Team Cymru). If `trippy-core` is a usable library crate, this single dependency covers hop count, per-hop latency, packet-loss-by-hop, route changes, and AS/ISP path.
-- **Team Cymru IP-to-ASN** (DNS-based, free) — for AS/ISP path if not using trippy's built-in.
-- Fallback: wrap system `traceroute`/`tracert`/`mtr`.
+- **`wifiscanner`** (MIT, limited maintenance) — only SSID/BSSID/RSSI/channel;
+  **missing noise, PHY rate, retries, MCS**. OK for a quick first pass only.
+- **Full Linux:** `neli` + direct **nl80211** — RSSI, frequency, channel, band,
+  PHY/TX-RX bitrate, MCS, noise, retries (driver-dependent).
+- **Full Windows:** the **`windows` crate** + native WLAN API — RSSI, channel,
+  PHY type, link quality, TX/RX rate, SSID, BSSID.
+- No better-maintained high-level cross-platform crate exists.
 
-**Tentative pick:** `trippy-core` if it's a consumable library crate — biggest
-single win in the complex tier. *Verify crate availability + license first.*
+**Pick:** platform-native (`neli`/nl80211 on Linux, `windows` crate on Windows)
+for the real metric set; `wifiscanner` only if we want a trivial SSID/RSSI stub
+first. This is two native implementations behind one NetPulse trait.
 
-## Wi-Fi metrics — ⚠ unverified
+## Speed test + bufferbloat — ✓ verified (needs a backend decision)
 
-- **`wifiscanner`** (MIT) — basic cross-platform (parses `iw`/`netsh`/`airport`): SSID, RSSI, channel. Limited fields.
-- **Full Linux:** `nl80211` via `neli`/`wl-nl80211` (RSSI, PHY rate, band, width, noise, retransmits).
-- **Full Windows:** WLAN API via the `windows` crate.
+**Every good option requires a server** — this is the catch:
+- **Crusader** (MIT/Apache) — measures download/upload/latency/**latency-under-
+  load (bufferbloat)**/loss, but is **binary-first (no stable library API)** and
+  **requires a Crusader server**. Not embeddable as a crate.
+- **librespeed-cli** (Go, **LGPL-3.0**) — ping/jitter/download/upload; fine to
+  **bundle as an external binary**, but needs a **LibreSpeed-compatible server**.
+- **Cloudflare `speed.cloudflare.com`** — technically possible but **not
+  recommended for commercial embedding** (no public API/license for it).
+- **No mature Rust crate** does full speed test — projects roll their own or
+  shell out to librespeed-cli.
 
-**Tentative pick:** `wifiscanner` for the basic subset first; platform-native
-(`nl80211` + `windows` crate) for the full metric set later.
+**Decision required before building:** either (a) **host/point at a LibreSpeed
+backend** and bundle `librespeed-cli`, or (b) **write our own client** against
+public LibreSpeed community servers (Crusader-inspired for the bufferbloat part).
+Because it needs infra, this is *not* a quick add — schedule accordingly.
 
-## Per-application bandwidth — ⚠ unverified
+## Per-application bandwidth — ✓ verified (hardest; opt-in)
 
-- **`bandwhich`** (Rust, MIT) — per-process bandwidth via packet capture. Needs privileges (pcap/eBPF on Linux, npcap on Windows). Verify whether a library crate or binary-only.
-- **nethogs** (GPL binary) — Linux only; separate-process invocation only.
+- **`bandwhich`** — **CLI only, GPL-3.0**: invoke as an external process only,
+  never link. Needs **root/CAP_NET_ADMIN/CAP_BPF** (eBPF/libpcap) on Linux and
+  **Npcap** on Windows.
+- **No mature cross-platform Rust crate** — realistically native per-OS collectors.
 
-**Tentative pick:** `bandwhich` approach; gate behind an explicit
-"enable per-app monitoring (needs elevation)" toggle.
+**Pick:** native per-OS collectors gated behind an explicit "enable per-app
+monitoring (needs elevation)" toggle; optionally shell out to `bandwhich` on
+Linux. Low priority.
 
-## Per-device bandwidth / device count / router stats — ⚠ unverified
+## Device discovery / router stats — ✓ verified
 
-- **`mdns-sd`** (Rust) — LAN device discovery.
-- **ARP-scan** crates — connected device enumeration (needs privileges).
-- **SNMP** (`csnmp` / `snmp2`) — router CPU/memory + per-device stats, router-dependent.
+- **`mdns-sd`** (Rust, **MIT/Apache**, maintained, Win+Linux) — LAN device
+  discovery (printers, TVs, Chromecast, NAS, IoT). Good for device **count/list**.
+- **`csnmp`** (Rust, **MIT/Apache**) — router CPU/memory/interface counters/
+  bandwidth/uptime via SNMP. Requires **SNMP enabled on the router** + community
+  string / SNMPv3 creds.
+- **ARP discovery** — only low-level crates; reading the ARP **cache** needs no
+  admin, but **sending ARP probes/raw frames usually needs root/admin**.
 
-**Tentative pick:** `mdns-sd` for device count first; SNMP for router stats
-where the router supports it. Per-device bandwidth realistically needs router
-SNMP or capture — hardest item; schedule last.
+**Pick:** `mdns-sd` for device discovery first (unprivileged, permissive);
+`csnmp` for router stats where supported. Per-device *bandwidth* still needs
+router SNMP or capture — hardest, schedule last.
 
 ---
 
 ## Recommended complex-tier build order
 
-1. **Security probes** — verified, mostly permissive crates, schema ready, low friction. *(Build next.)*
-2. **Speed test + bufferbloat** — one engine/approach unlocks several metrics.
-3. **Traceroute / routing** — `trippy-core` likely covers the whole domain.
-4. **Wi-Fi** — basic subset, then platform-native full set.
-5. **Per-app bandwidth** — privileged, opt-in.
-6. **Per-device / router** — SNMP/discovery, hardest; last.
-7. **AI Insights** — our own analysis layer over all of the above.
+1. **Security probes** — verified, permissive crates, schema ready, low friction. *(Build next.)*
+2. **Traceroute / routing** — `trippy-core`, one permissive library crate for the whole domain.
+3. **Device discovery** — `mdns-sd`, unprivileged, permissive; easy device count/list.
+4. **Wi-Fi** — `wifiscanner` stub, then platform-native (`neli`/nl80211 + `windows` crate) for the full set.
+5. **Router stats** — `csnmp`, where the router supports SNMP.
+6. **Speed test + bufferbloat** — needs a LibreSpeed backend decision (host vs bundle vs own client); more infra than code.
+7. **Per-app / per-device bandwidth** — privileged, native, opt-in; hardest.
+8. **AI Insights** — our own analysis layer over all of the above.
 
-> The ⚠ items still need a quick license/crate-availability check (blocked now
-> by the research session limit) before we add the dependency.
+## Verified stack summary
+
+| Feature | Pick | License | Form |
+|---|---|---|---|
+| Traceroute + ASN | `trippy-core` + Team Cymru DNS | Apache-2.0 | Rust lib |
+| Device discovery | `mdns-sd` | MIT/Apache | Rust lib |
+| Router stats | `csnmp` | MIT/Apache | Rust lib |
+| NAT / external IP | `stunclient` (+ `stun-rs` RFC5780) | MIT/Apache | Rust lib |
+| UPnP/IGD | `igd-next` | MIT | Rust lib |
+| VPN/interfaces | `netdev` (or `if-addrs`) | MIT | Rust lib |
+| DoH/DoT | `hickory-resolver` (already in tree) | MIT/Apache | Rust lib |
+| Open ports | DIY `tokio` connect-scan | MIT (ours) | our code |
+| Firewall | native CLIs (`netsh`/`ufw`/`systemctl`) | n/a | shell-out |
+| Wi-Fi (Linux) | `neli` + nl80211 | — | Rust lib |
+| Wi-Fi (Windows) | `windows` crate WLAN API | — | Rust lib |
+| Speed/bufferbloat | own client OR bundled `librespeed-cli` + backend | LGPL (binary) | binary/own |
+| Per-app bandwidth | native collectors; optional `bandwhich` | GPL (external) | native/binary |
