@@ -230,6 +230,31 @@ impl Store {
         Ok(())
     }
 
+    /// Record a QoE score row.
+    pub async fn insert_qoe(
+        &self,
+        ts: i64,
+        gaming: f64,
+        video_call: f64,
+        streaming: f64,
+        web: f64,
+        voip: f64,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO qoe_scores (ts, gaming, video_call, streaming, web, voip) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(ts)
+        .bind(gaming)
+        .bind(video_call)
+        .bind(streaming)
+        .bind(web)
+        .bind(voip)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Record a discrete event.
     pub async fn insert_event(
         &self,
@@ -297,6 +322,159 @@ impl Store {
             disconnects,
         })
     }
+
+    /// Roll up connectivity metrics (latency, loss, jitter) into `metric_rollups`
+    /// for the hour and day buckets, then prune raw samples older than the
+    /// retention window. Safe to call repeatedly; only *closed* buckets that
+    /// still have raw data are (re)computed, so already-pruned buckets are left
+    /// untouched. Returns the number of rollup rows written.
+    pub async fn maintain(&self, now: i64) -> Result<i64> {
+        const HOUR_MS: i64 = 3_600_000;
+        const DAY_MS: i64 = 86_400_000;
+        let metrics = [("latency", "rtt_avg"), ("loss", "loss_pct"), ("jitter", "rtt_jitter")];
+
+        let mut written = 0;
+        for (metric, col) in metrics {
+            written += self.rollup_metric(metric, col, HOUR_MS, "hour", now).await?;
+            written += self.rollup_metric(metric, col, DAY_MS, "day", now).await?;
+        }
+
+        // Prune raw samples older than retention, aligned to the hour so we never
+        // half-prune a bucket that a future rollup pass might recompute.
+        let days = self.get_setting_i64("retention.raw_days").await?.unwrap_or(7);
+        let cutoff = ((now - days * DAY_MS) / HOUR_MS) * HOUR_MS;
+        self.prune_connectivity_before(cutoff).await?;
+
+        Ok(written)
+    }
+
+    /// Aggregate one metric into `metric_rollups` (global series, `target_id=0`)
+    /// for closed buckets. `col` is a fixed internal column name (never user
+    /// input), so the formatted SQL is injection-safe.
+    async fn rollup_metric(
+        &self,
+        metric: &str,
+        col: &str,
+        bucket_ms: i64,
+        bucket_label: &str,
+        now: i64,
+    ) -> Result<i64> {
+        let current_bucket = (now / bucket_ms) * bucket_ms;
+        let sql = format!(
+            "SELECT (ts / {bucket_ms}) * {bucket_ms} AS b, {col} AS v \
+             FROM connectivity_samples \
+             WHERE {col} IS NOT NULL AND ts < ? ORDER BY b",
+        );
+        let rows: Vec<(i64, f64)> =
+            sqlx::query_as(&sql).bind(current_bucket).fetch_all(&self.pool).await?;
+
+        let mut written = 0;
+        let mut i = 0;
+        while i < rows.len() {
+            let bucket_ts = rows[i].0;
+            let mut vals = Vec::new();
+            while i < rows.len() && rows[i].0 == bucket_ts {
+                vals.push(rows[i].1);
+                i += 1;
+            }
+            self.upsert_rollup(metric, bucket_label, bucket_ts, &mut vals).await?;
+            written += 1;
+        }
+        Ok(written)
+    }
+
+    async fn upsert_rollup(
+        &self,
+        metric: &str,
+        bucket: &str,
+        bucket_ts: i64,
+        vals: &mut [f64],
+    ) -> Result<()> {
+        vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let count = vals.len() as i64;
+        let sum: f64 = vals.iter().sum();
+        let min = vals[0];
+        let max = vals[vals.len() - 1];
+        let avg = sum / count as f64;
+        let p50 = percentile(vals, 50.0);
+        let p95 = percentile(vals, 95.0);
+
+        sqlx::query(
+            "INSERT INTO metric_rollups \
+             (metric, target_id, bucket, bucket_ts, count, min, avg, max, p50, p95, sum) \
+             VALUES (?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(metric, target_id, bucket, bucket_ts) DO UPDATE SET \
+               count = excluded.count, min = excluded.min, avg = excluded.avg, \
+               max = excluded.max, p50 = excluded.p50, p95 = excluded.p95, sum = excluded.sum",
+        )
+        .bind(metric)
+        .bind(bucket)
+        .bind(bucket_ts)
+        .bind(count)
+        .bind(min)
+        .bind(avg)
+        .bind(max)
+        .bind(p50)
+        .bind(p95)
+        .bind(sum)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn prune_connectivity_before(&self, cutoff: i64) -> Result<u64> {
+        let r = sqlx::query("DELETE FROM connectivity_samples WHERE ts < ?")
+            .bind(cutoff)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected())
+    }
+
+    /// Read a settings value as i64 (values are JSON scalars; a bare number
+    /// parses directly).
+    pub async fn get_setting_i64(&self, key: &str) -> Result<Option<i64>> {
+        let v: Option<String> =
+            sqlx::query_scalar("SELECT value FROM settings WHERE key = ?")
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(v.and_then(|s| s.trim().parse::<i64>().ok()))
+    }
+
+    /// Read rollup rows for a metric/bucket since `bucket_ts >= since` (global series).
+    pub async fn rollups(&self, metric: &str, bucket: &str, since: i64) -> Result<Vec<Rollup>> {
+        let rows = sqlx::query_as::<_, Rollup>(
+            "SELECT metric, target_id, bucket, bucket_ts, count, min, avg, max, p50, p95, sum \
+             FROM metric_rollups \
+             WHERE metric = ? AND bucket = ? AND target_id = 0 AND bucket_ts >= ? \
+             ORDER BY bucket_ts",
+        )
+        .bind(metric)
+        .bind(bucket)
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+}
+
+/// Exact percentile (linear interpolation) over an already-sorted slice.
+fn percentile(sorted: &[f64], p: f64) -> f64 {
+    match sorted.len() {
+        0 => 0.0,
+        1 => sorted[0],
+        n => {
+            let rank = p / 100.0 * (n as f64 - 1.0);
+            let lo = rank.floor() as usize;
+            let hi = rank.ceil() as usize;
+            if lo == hi {
+                sorted[lo]
+            } else {
+                let frac = rank - lo as f64;
+                sorted[lo] + (sorted[hi] - sorted[lo]) * frac
+            }
+        }
+    }
 }
 
 /// A connectivity probe-cycle result ready to persist.
@@ -341,6 +519,22 @@ pub struct Outage {
     pub duration_ms: Option<i64>,
     pub reconnect_ms: Option<i64>,
     pub cause: Option<String>,
+}
+
+/// One aggregated metric bucket from `metric_rollups`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct Rollup {
+    pub metric: String,
+    pub target_id: i64,
+    pub bucket: String,
+    pub bucket_ts: i64,
+    pub count: i64,
+    pub min: Option<f64>,
+    pub avg: Option<f64>,
+    pub max: Option<f64>,
+    pub p50: Option<f64>,
+    pub p95: Option<f64>,
+    pub sum: Option<f64>,
 }
 
 /// Reliability rollup over a time window.
@@ -555,6 +749,96 @@ mod tests {
 
         let r = store.reliability_since(0).await.unwrap();
         assert_eq!(r.disconnects, 1);
+    }
+
+    #[test]
+    fn percentile_interpolates() {
+        let v = vec![10.0, 20.0, 30.0, 40.0, 50.0];
+        assert_eq!(percentile(&v, 50.0), 30.0);
+        assert_eq!(percentile(&v, 0.0), 10.0);
+        assert_eq!(percentile(&v, 100.0), 50.0);
+        // p95 of 5 points: rank = 0.95*4 = 3.8 -> 40 + 0.8*(50-40) = 48
+        assert!((percentile(&v, 95.0) - 48.0).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn maintain_rolls_up_and_prunes() {
+        let store = Store::open_in_memory().await.unwrap();
+        store.seed_default_settings(0).await.unwrap();
+        store.seed_default_targets(0).await.unwrap();
+
+        const HOUR: i64 = 3_600_000;
+        // Put 3 samples in hour bucket 0 with latencies 10/20/30.
+        for (off, rtt) in [(0, 10.0), (60_000, 20.0), (120_000, 30.0)] {
+            store
+                .insert_connectivity_sample(NewConnectivitySample {
+                    ts: off,
+                    target_id: 1,
+                    ip_version: 4,
+                    sent: 5,
+                    received: 5,
+                    loss_pct: 0.0,
+                    rtt_min: Some(rtt),
+                    rtt_avg: Some(rtt),
+                    rtt_max: Some(rtt),
+                    rtt_jitter: Some(1.0),
+                    up: true,
+                })
+                .await
+                .unwrap();
+        }
+
+        // "now" well past that hour so the bucket is closed. Retention default 7d
+        // keeps the raw rows (they're recent relative to `now` here = 5h).
+        let now = 5 * HOUR;
+        let written = store.maintain(now).await.unwrap();
+        assert!(written >= 2, "expected latency+loss+jitter hour/day rollups");
+
+        let latency = store.rollups("latency", "hour", 0).await.unwrap();
+        assert_eq!(latency.len(), 1);
+        assert_eq!(latency[0].bucket_ts, 0);
+        assert_eq!(latency[0].count, 3);
+        assert_eq!(latency[0].avg, Some(20.0));
+        assert_eq!(latency[0].p50, Some(20.0));
+
+        // Raw samples still present (within retention).
+        assert_eq!(store.recent_connectivity(10).await.unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn maintain_prunes_old_raw_but_keeps_rollup() {
+        let store = Store::open_in_memory().await.unwrap();
+        // Retention 0 days => prune everything up to the current hour.
+        store.seed_default_targets(0).await.unwrap();
+        sqlx::query("INSERT INTO settings (key, value, updated_at) VALUES ('retention.raw_days','0',0)")
+            .execute(store.pool())
+            .await
+            .unwrap();
+
+        store
+            .insert_connectivity_sample(NewConnectivitySample {
+                ts: 0,
+                target_id: 1,
+                ip_version: 4,
+                sent: 5,
+                received: 5,
+                loss_pct: 0.0,
+                rtt_min: Some(15.0),
+                rtt_avg: Some(15.0),
+                rtt_max: Some(15.0),
+                rtt_jitter: Some(0.0),
+                up: true,
+            })
+            .await
+            .unwrap();
+
+        let now = 5 * 3_600_000;
+        store.maintain(now).await.unwrap();
+
+        // Rollup persisted...
+        assert_eq!(store.rollups("latency", "hour", 0).await.unwrap().len(), 1);
+        // ...but the old raw sample was pruned.
+        assert_eq!(store.recent_connectivity(10).await.unwrap().len(), 0);
     }
 
     #[tokio::test]

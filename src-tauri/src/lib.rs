@@ -8,7 +8,7 @@
 use std::sync::Mutex;
 
 use netpulse_monitor::{now_ms, Monitor, MonitorConfig, StatusUpdate};
-use netpulse_store::{ConnectivitySample, NewTarget, Reliability, Store, Target};
+use netpulse_store::{ConnectivitySample, NewTarget, Reliability, Rollup, Store, Target};
 use tauri::{Emitter, Manager, State};
 
 /// Shared application state handed to every command.
@@ -69,6 +69,19 @@ async fn recent_connectivity(
     state.store.recent_connectivity(limit).await.map_err(|e| e.to_string())
 }
 
+/// Aggregated history for a metric ("latency"/"loss"/"jitter") at a bucket
+/// ("hour"/"day") over the last `window_secs` seconds.
+#[tauri::command]
+async fn metric_history(
+    state: State<'_, AppState>,
+    metric: String,
+    bucket: String,
+    window_secs: i64,
+) -> Result<Vec<Rollup>, String> {
+    let since = now_ms() - window_secs * 1000;
+    state.store.rollups(&metric, &bucket, since).await.map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -112,7 +125,8 @@ pub fn run() {
             add_target,
             current_status,
             reliability,
-            recent_connectivity
+            recent_connectivity,
+            metric_history
         ])
         .run(tauri::generate_context!())
         .expect("error while running NetPulse");

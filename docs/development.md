@@ -78,6 +78,10 @@ is a stable signal for latency/jitter/loss.
 - `netpulse-monitor` — samples every enabled internet target on an interval,
   writes `connectivity_samples`, and opens/closes `outages` (internet is "down"
   only when *every* target fails a cycle). Emits a `status` event to the UI.
+  Also runs **maintenance** hourly: rolls up latency/loss/jitter into
+  `metric_rollups` (exact p50/p95) and prunes raw samples past
+  `retention.raw_days`. Computes **QoE scores** (`qoe.rs`) each cycle from
+  latency/jitter/loss and persists them to `qoe_scores`.
 
 ## Database
 

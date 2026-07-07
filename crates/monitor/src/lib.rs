@@ -14,6 +14,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use netpulse_probe::{probe, ProbeConfig};
 use netpulse_store::{NewConnectivitySample, Store, StoreError};
 
+pub mod qoe;
+pub use qoe::Qoe;
+
 /// How the monitor samples.
 #[derive(Debug, Clone)]
 pub struct MonitorConfig {
@@ -23,11 +26,18 @@ pub struct MonitorConfig {
     pub port: u16,
     /// Per-target probe settings (count, timeout, gap).
     pub probe: ProbeConfig,
+    /// How often to run rollups + retention pruning.
+    pub maintenance_interval: Duration,
 }
 
 impl Default for MonitorConfig {
     fn default() -> Self {
-        Self { interval: Duration::from_secs(15), port: 443, probe: ProbeConfig::default() }
+        Self {
+            interval: Duration::from_secs(15),
+            port: 443,
+            probe: ProbeConfig::default(),
+            maintenance_interval: Duration::from_secs(3600),
+        }
     }
 }
 
@@ -43,6 +53,8 @@ pub struct StatusUpdate {
     /// Mean loss across probed targets this cycle.
     pub avg_loss_pct: Option<f64>,
     pub outage_ongoing: bool,
+    /// Quality-of-experience scores for this cycle; `None` while offline.
+    pub qoe: Option<Qoe>,
 }
 
 pub struct Monitor {
@@ -69,6 +81,8 @@ impl Monitor {
         let mut targets_up = 0i64;
         let mut best_latency: Option<f64> = None;
         let mut loss_sum = 0.0f64;
+        let mut jitter_sum = 0.0f64;
+        let mut jitter_n = 0i64;
 
         for t in &targets {
             let ipv = t.ip_version.unwrap_or(4) as u8;
@@ -97,6 +111,10 @@ impl Monitor {
                 if let Some(avg) = out.rtt_avg {
                     best_latency = Some(best_latency.map_or(avg, |b| b.min(avg)));
                 }
+                if let Some(j) = out.rtt_jitter {
+                    jitter_sum += j;
+                    jitter_n += 1;
+                }
             }
         }
 
@@ -108,6 +126,20 @@ impl Monitor {
         self.update_outage(now, online, all_down).await?;
 
         let avg_loss = (total > 0).then(|| loss_sum / total as f64);
+
+        // Quality-of-experience scores from this cycle's best latency + mean
+        // jitter + mean loss. Persisted for trending; None while offline.
+        let qoe = if online {
+            let jitter = if jitter_n > 0 { jitter_sum / jitter_n as f64 } else { 0.0 };
+            let q = Qoe::score(best_latency.unwrap_or(0.0), jitter, avg_loss.unwrap_or(0.0));
+            self.store
+                .insert_qoe(now, q.gaming, q.video_call, q.streaming, q.web, q.voip)
+                .await?;
+            Some(q)
+        } else {
+            None
+        };
+
         Ok(StatusUpdate {
             ts: now,
             online,
@@ -116,6 +148,7 @@ impl Monitor {
             best_latency_ms: best_latency,
             avg_loss_pct: avg_loss,
             outage_ongoing: all_down,
+            qoe,
         })
     }
 
@@ -140,10 +173,18 @@ impl Monitor {
     /// Real-time loop: tick every `interval`, forwarding each status to `sink`.
     /// Runs until the sink is closed (receiver dropped) or forever otherwise.
     pub async fn run(&self, sink: Option<tokio::sync::mpsc::Sender<StatusUpdate>>) {
+        // Roll up any backlog + prune once at startup.
+        if let Err(e) = self.store.maintain(now_ms()).await {
+            eprintln!("netpulse initial maintenance failed: {e}");
+        }
+        let mut last_maint = now_ms();
+
         let mut ticker = tokio::time::interval(self.config.interval);
+        let maint_ms = self.config.maintenance_interval.as_millis() as i64;
         loop {
             ticker.tick().await;
-            match self.tick(now_ms()).await {
+            let now = now_ms();
+            match self.tick(now).await {
                 Ok(update) => {
                     if let Some(tx) = &sink {
                         if tx.send(update).await.is_err() {
@@ -155,6 +196,12 @@ impl Monitor {
                     // A transient DB error shouldn't kill monitoring.
                     eprintln!("netpulse monitor tick failed: {e}");
                 }
+            }
+            if now - last_maint >= maint_ms {
+                if let Err(e) = self.store.maintain(now).await {
+                    eprintln!("netpulse maintenance failed: {e}");
+                }
+                last_maint = now;
             }
         }
     }
@@ -181,6 +228,7 @@ mod tests {
                 gap: Duration::ZERO,
                 ip_version: None,
             },
+            maintenance_interval: Duration::from_secs(3600),
         }
     }
 
@@ -215,6 +263,9 @@ mod tests {
         assert_eq!(update.targets_total, 1);
         assert!(update.best_latency_ms.is_some());
         assert!(!update.outage_ongoing);
+        // Local loopback is pristine -> QoE computed and near-perfect.
+        let qoe = update.qoe.expect("qoe present when online");
+        assert!(qoe.gaming > 90.0, "gaming {}", qoe.gaming);
 
         assert_eq!(store.recent_connectivity(10).await.unwrap().len(), 1);
         assert!(store.current_open_outage().await.unwrap().is_none());

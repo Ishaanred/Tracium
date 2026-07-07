@@ -2,6 +2,14 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+interface Qoe {
+  gaming: number;
+  video_call: number;
+  streaming: number;
+  web: number;
+  voip: number;
+}
+
 interface StatusUpdate {
   ts: number;
   online: boolean;
@@ -10,6 +18,13 @@ interface StatusUpdate {
   best_latency_ms: number | null;
   avg_loss_pct: number | null;
   outage_ongoing: boolean;
+  qoe: Qoe | null;
+}
+
+interface Rollup {
+  bucket_ts: number;
+  avg: number | null;
+  p95: number | null;
 }
 
 interface Reliability {
@@ -42,19 +57,28 @@ function fmtPct(v: number | null | undefined): string {
 export default function App() {
   const [status, setStatus] = useState<StatusUpdate | null>(null);
   const [rel, setRel] = useState<Reliability | null>(null);
+  const [history, setHistory] = useState<Rollup[]>([]);
   const [targets, setTargets] = useState<Target[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Refresh the reliability summary (called on mount + after each status tick).
-  const refreshReliability = () =>
+  // Refresh derived summaries (called on mount + after each status tick).
+  const refreshDerived = () => {
     invoke<Reliability>("reliability", { windowSecs: DAY_SECS }).then(setRel).catch(() => {});
+    invoke<Rollup[]>("metric_history", {
+      metric: "latency",
+      bucket: "hour",
+      windowSecs: DAY_SECS,
+    })
+      .then(setHistory)
+      .catch(() => {});
+  };
 
   useEffect(() => {
     (async () => {
       try {
         setTargets(await invoke<Target[]>("list_targets"));
         setStatus(await invoke<StatusUpdate | null>("current_status"));
-        await refreshReliability();
+        refreshDerived();
       } catch (e) {
         setError(String(e));
       }
@@ -62,7 +86,7 @@ export default function App() {
 
     const unlisten = listen<StatusUpdate>("status", (e) => {
       setStatus(e.payload);
-      refreshReliability();
+      refreshDerived();
     });
     return () => {
       unlisten.then((fn) => fn());
@@ -100,6 +124,30 @@ export default function App() {
       </section>
 
       <section className="card">
+        <h2>Quality of experience</h2>
+        {status?.qoe ? (
+          <div className="grid">
+            <Score label="Gaming" value={status.qoe.gaming} />
+            <Score label="Video call" value={status.qoe.video_call} />
+            <Score label="Streaming" value={status.qoe.streaming} />
+            <Score label="VoIP" value={status.qoe.voip} />
+            <Score label="Web" value={status.qoe.web} />
+          </div>
+        ) : (
+          <p className="status">{online === false ? "Offline." : "Scoring…"}</p>
+        )}
+      </section>
+
+      <section className="card">
+        <h2>Latency — last 24h (hourly avg)</h2>
+        {history.length > 1 ? (
+          <Sparkline points={history.map((h) => h.avg ?? 0)} />
+        ) : (
+          <p className="status">Not enough history yet — building hourly rollups.</p>
+        )}
+      </section>
+
+      <section className="card">
         <h2>Last 24 hours</h2>
         {rel ? (
           <div className="grid">
@@ -130,6 +178,44 @@ export default function App() {
         )}
       </section>
     </main>
+  );
+}
+
+function scoreColor(v: number): string {
+  if (v >= 80) return "var(--ok)";
+  if (v >= 50) return "#fbbf24";
+  return "var(--bad)";
+}
+
+function Score({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="stat">
+      <span className="stat__label">{label}</span>
+      <span className="stat__value" style={{ color: scoreColor(value) }}>
+        {value.toFixed(0)}
+      </span>
+    </div>
+  );
+}
+
+function Sparkline({ points }: { points: number[] }) {
+  const W = 600;
+  const H = 60;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const span = max - min || 1;
+  const step = points.length > 1 ? W / (points.length - 1) : W;
+  const path = points
+    .map((v, i) => {
+      const x = i * step;
+      const y = H - ((v - min) / span) * (H - 8) - 4;
+      return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg className="spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img">
+      <path d={path} fill="none" stroke="var(--accent)" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+    </svg>
   );
 }
 
