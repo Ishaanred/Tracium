@@ -13,9 +13,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use netpulse_probe::security::{check_doh, check_dot, detect_vpn, firewall_active, scan_local_ports, COMMON_PORTS};
 use netpulse_probe::{
-    discover_devices, dns_lookup, probe, public_ip, traceroute, BandwidthSampler, ProbeConfig,
+    discover_devices, dns_lookup, get_wifi, probe, public_ip, traceroute, BandwidthSampler,
+    ProbeConfig,
 };
-use netpulse_store::{NewConnectivitySample, SecuritySnapshot, Store, StoreError, TracerouteHop};
+use netpulse_store::{
+    NewConnectivitySample, SecuritySnapshot, Store, StoreError, TracerouteHop, WifiSample,
+};
 
 /// Resolvers compared on the DNS cadence (label, IP).
 const DNS_RESOLVERS: &[(&str, &str)] =
@@ -49,6 +52,8 @@ pub struct MonitorConfig {
     pub security_interval: Duration,
     /// Timeout for individual security probes (DoH/DoT).
     pub security_timeout: Duration,
+    /// How often to sample the Wi-Fi link.
+    pub wifi_interval: Duration,
     /// How often to enumerate LAN devices.
     pub devices_interval: Duration,
     /// How often to run a traceroute.
@@ -72,6 +77,7 @@ impl Default for MonitorConfig {
             public_ip_timeout: Duration::from_secs(5),
             security_interval: Duration::from_secs(300),
             security_timeout: Duration::from_secs(4),
+            wifi_interval: Duration::from_secs(30),
             devices_interval: Duration::from_secs(60),
             traceroute_interval: Duration::from_secs(600),
             traceroute_target: "1.1.1.1".to_string(),
@@ -225,6 +231,33 @@ impl Monitor {
         Ok(())
     }
 
+    /// Sample the Wi-Fi link and persist it; emit a `roam` event when the BSSID
+    /// changes (the device jumped to a different AP).
+    pub async fn sample_wifi(&self, now: i64) -> Result<(), StoreError> {
+        let Some(info) = get_wifi().await else { return Ok(()) };
+        let previous = self.store.latest_wifi().await?;
+
+        let sample = WifiSample {
+            ts: now,
+            ssid: info.ssid,
+            bssid: info.bssid,
+            rssi_dbm: info.rssi_dbm,
+            quality_pct: info.quality_pct,
+            link_speed_mbps: info.link_mbps,
+            band: info.band,
+            channel: info.channel,
+        };
+        self.store.insert_wifi_sample(&sample).await?;
+
+        if let (Some(prev), Some(now_bssid)) = (previous.and_then(|p| p.bssid), &sample.bssid) {
+            if &prev != now_bssid {
+                let payload = format!(r#"{{"from":"{prev}","to":"{now_bssid}"}}"#);
+                self.store.insert_event(now, "roam", "info", None, Some(&payload)).await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Enumerate LAN devices from the ARP cache and upsert them.
     pub async fn sample_devices(&self, now: i64) -> Result<(), StoreError> {
         for entry in discover_devices().await {
@@ -349,6 +382,7 @@ impl Monitor {
         let mut last_security = 0i64;
         let mut last_trace = 0i64;
         let mut last_devices = 0i64;
+        let mut last_wifi = 0i64;
         let mut bandwidth = BandwidthSampler::new();
 
         let mut ticker = tokio::time::interval(self.config.interval);
@@ -358,6 +392,7 @@ impl Monitor {
         let security_ms = self.config.security_interval.as_millis() as i64;
         let trace_ms = self.config.traceroute_interval.as_millis() as i64;
         let devices_ms = self.config.devices_interval.as_millis() as i64;
+        let wifi_ms = self.config.wifi_interval.as_millis() as i64;
         loop {
             ticker.tick().await;
             let now = now_ms();
@@ -408,6 +443,12 @@ impl Monitor {
                 }
                 last_devices = now;
             }
+            if now - last_wifi >= wifi_ms {
+                if let Err(e) = self.sample_wifi(now).await {
+                    eprintln!("netpulse wifi sample failed: {e}");
+                }
+                last_wifi = now;
+            }
             if now - last_maint >= maint_ms {
                 if let Err(e) = self.store.maintain(now).await {
                     eprintln!("netpulse maintenance failed: {e}");
@@ -446,6 +487,7 @@ mod tests {
             public_ip_timeout: Duration::from_millis(300),
             security_interval: Duration::from_secs(300),
             security_timeout: Duration::from_millis(300),
+            wifi_interval: Duration::from_secs(30),
             devices_interval: Duration::from_secs(60),
             traceroute_interval: Duration::from_secs(600),
             traceroute_target: "1.1.1.1".to_string(),

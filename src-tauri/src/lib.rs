@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use netpulse_monitor::{now_ms, Monitor, MonitorConfig, StatusUpdate};
 use netpulse_store::{
     BandwidthNow, BandwidthTotals, ConnectivitySample, Device, DnsResolverStat, Event, NewTarget,
-    Outage, Reliability, Rollup, SecuritySnapshot, Store, Target, TracerouteView,
+    Outage, Reliability, Rollup, SecuritySnapshot, Store, Target, TracerouteView, WifiSample,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -99,6 +99,12 @@ async fn bandwidth_totals(
 ) -> Result<BandwidthTotals, String> {
     let since = now_ms() - window_secs * 1000;
     state.store.bandwidth_totals(since).await.map_err(|e| e.to_string())
+}
+
+/// The latest Wi-Fi link sample, if connected.
+#[tauri::command]
+async fn wifi(state: State<'_, AppState>) -> Result<Option<WifiSample>, String> {
+    state.store.latest_wifi().await.map_err(|e| e.to_string())
 }
 
 /// Known LAN devices (most-recently-seen first).
@@ -226,6 +232,7 @@ pub fn run() {
             security_status,
             latest_traceroute,
             devices,
+            wifi,
             recent_events,
             recent_outages,
             export_csv

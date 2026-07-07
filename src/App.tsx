@@ -59,6 +59,15 @@ interface Security {
   open_ports: string | null;
 }
 
+interface Wifi {
+  ssid: string | null;
+  bssid: string | null;
+  rssi_dbm: number | null;
+  link_speed_mbps: number | null;
+  band: string | null;
+  channel: number | null;
+}
+
 interface LanDevice {
   id: number;
   mac: string | null;
@@ -127,6 +136,7 @@ export default function App() {
   const [security, setSecurity] = useState<Security | null>(null);
   const [trace, setTrace] = useState<Traceroute | null>(null);
   const [devices, setDevices] = useState<LanDevice[]>([]);
+  const [wifi, setWifi] = useState<Wifi | null>(null);
   const [targets, setTargets] = useState<Target[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
@@ -151,6 +161,7 @@ export default function App() {
     invoke<Security | null>("security_status").then(setSecurity).catch(() => {});
     invoke<Traceroute | null>("latest_traceroute").then(setTrace).catch(() => {});
     invoke<LanDevice[]>("devices").then(setDevices).catch(() => {});
+    invoke<Wifi | null>("wifi").then(setWifi).catch(() => {});
   };
 
   const doExport = (kind: "connectivity" | "events") => {
@@ -300,6 +311,21 @@ export default function App() {
           </ul>
         )}
       </section>
+
+      {wifi && (
+        <section className="card">
+          <h2>Wi-Fi{wifi.ssid ? ` · ${wifi.ssid}` : ""}</h2>
+          <div className="grid">
+            <Stat label="Signal" value={wifi.rssi_dbm != null ? `${wifi.rssi_dbm} dBm` : "—"} />
+            <Stat label="Band" value={wifi.band ? `${wifi.band} GHz` : "—"} />
+            <Stat label="Channel" value={wifi.channel != null ? String(wifi.channel) : "—"} />
+            <Stat
+              label="Link rate"
+              value={wifi.link_speed_mbps != null ? `${wifi.link_speed_mbps} Mbps` : "—"}
+            />
+          </div>
+        </section>
+      )}
 
       <section className="card">
         <h2>Devices on network{devices.length ? ` · ${devices.length}` : ""}</h2>

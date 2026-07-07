@@ -364,6 +364,37 @@ impl Store {
         Ok(BandwidthTotals { rx_bytes: rx, tx_bytes: tx })
     }
 
+    /// Record a Wi-Fi link sample.
+    pub async fn insert_wifi_sample(&self, s: &WifiSample) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO wifi_samples \
+             (ts, ssid, bssid, rssi_dbm, quality_pct, link_speed_mbps, band, channel) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(s.ts)
+        .bind(&s.ssid)
+        .bind(&s.bssid)
+        .bind(s.rssi_dbm)
+        .bind(s.quality_pct)
+        .bind(s.link_speed_mbps)
+        .bind(&s.band)
+        .bind(s.channel)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// The most recent Wi-Fi sample, if any.
+    pub async fn latest_wifi(&self) -> Result<Option<WifiSample>> {
+        let row = sqlx::query_as::<_, WifiSample>(
+            "SELECT ts, ssid, bssid, rssi_dbm, quality_pct, link_speed_mbps, band, channel \
+             FROM wifi_samples ORDER BY ts DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     /// Insert or refresh a LAN device seen at `now` (keyed by MAC).
     pub async fn upsert_device(&self, mac: &str, ip: &str, now: i64) -> Result<()> {
         sqlx::query(
@@ -858,6 +889,19 @@ pub struct ConnectivitySample {
     pub up: bool,
 }
 
+/// A Wi-Fi link sample (subset of `wifi_samples` we currently populate).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct WifiSample {
+    pub ts: i64,
+    pub ssid: Option<String>,
+    pub bssid: Option<String>,
+    pub rssi_dbm: Option<i64>,
+    pub quality_pct: Option<f64>,
+    pub link_speed_mbps: Option<f64>,
+    pub band: Option<String>,
+    pub channel: Option<i64>,
+}
+
 /// A discovered LAN device.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct Device {
@@ -1140,6 +1184,29 @@ mod tests {
         let totals = store.bandwidth_totals(0).await.unwrap();
         assert_eq!(totals.rx_bytes, 4_000);
         assert_eq!(totals.tx_bytes, 600);
+    }
+
+    #[tokio::test]
+    async fn wifi_sample_roundtrip() {
+        let store = Store::open_in_memory().await.unwrap();
+        assert!(store.latest_wifi().await.unwrap().is_none());
+        store
+            .insert_wifi_sample(&WifiSample {
+                ts: 100,
+                ssid: Some("HomeNet".into()),
+                bssid: Some("aa:bb:cc:dd:ee:ff".into()),
+                rssi_dbm: Some(-45),
+                quality_pct: None,
+                link_speed_mbps: Some(300.0),
+                band: Some("5".into()),
+                channel: Some(36),
+            })
+            .await
+            .unwrap();
+        let w = store.latest_wifi().await.unwrap().unwrap();
+        assert_eq!(w.ssid.as_deref(), Some("HomeNet"));
+        assert_eq!(w.rssi_dbm, Some(-45));
+        assert_eq!(w.channel, Some(36));
     }
 
     #[tokio::test]
