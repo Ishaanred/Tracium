@@ -10,7 +10,8 @@ use std::sync::Mutex;
 use netpulse_monitor::{now_ms, Monitor, MonitorConfig, StatusUpdate};
 use netpulse_store::{
     BandwidthNow, BandwidthTotals, ConnectivitySample, Device, DnsResolverStat, Event, NewTarget,
-    Outage, Reliability, Rollup, SecuritySnapshot, Store, Target, TracerouteView, WifiSample,
+    Outage, Reliability, Rollup, SecuritySnapshot, SpeedtestRow, Store, Target, TracerouteView,
+    WifiSample,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -99,6 +100,35 @@ async fn bandwidth_totals(
 ) -> Result<BandwidthTotals, String> {
     let since = now_ms() - window_secs * 1000;
     state.store.bandwidth_totals(since).await.map_err(|e| e.to_string())
+}
+
+/// Run a speed test now (invokes `librespeed-cli`), store it, and return it.
+/// On-demand only — speed tests consume data, so they aren't auto-scheduled.
+#[tauri::command]
+async fn run_speedtest(state: State<'_, AppState>) -> Result<Option<SpeedtestRow>, String> {
+    let result =
+        netpulse_probe::run_speedtest(std::time::Duration::from_secs(90)).await;
+    let Some(r) = result else { return Ok(None) };
+    let row = SpeedtestRow {
+        ts: now_ms(),
+        engine: Some("librespeed-cli".into()),
+        server: r.server,
+        download_mbps: r.download_mbps,
+        upload_mbps: r.upload_mbps,
+        ping_ms: r.ping_ms,
+        jitter_ms: r.jitter_ms,
+    };
+    state.store.insert_speedtest(&row).await.map_err(|e| e.to_string())?;
+    Ok(Some(row))
+}
+
+/// Recent speed-test results.
+#[tauri::command]
+async fn speedtest_history(
+    state: State<'_, AppState>,
+    limit: i64,
+) -> Result<Vec<SpeedtestRow>, String> {
+    state.store.speedtest_history(limit).await.map_err(|e| e.to_string())
 }
 
 /// On-demand SNMP query of a router. `addr` is an IP (":161" appended if no
@@ -252,6 +282,8 @@ pub fn run() {
             devices,
             wifi,
             router_status,
+            run_speedtest,
+            speedtest_history,
             recent_events,
             recent_outages,
             export_csv

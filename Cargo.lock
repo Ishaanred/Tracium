@@ -2458,6 +2458,7 @@ dependencies = [
  "hickory-resolver",
  "netdev",
  "serde",
+ "serde_json",
  "sysinfo",
  "tokio",
  "ureq",

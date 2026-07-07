@@ -59,6 +59,15 @@ interface Security {
   open_ports: string | null;
 }
 
+interface Speedtest {
+  ts: number;
+  server: string | null;
+  download_mbps: number | null;
+  upload_mbps: number | null;
+  ping_ms: number | null;
+  jitter_ms: number | null;
+}
+
 interface RouterInfo {
   descr: string | null;
   name: string | null;
@@ -150,6 +159,25 @@ export default function App() {
   const [routerCommunity, setRouterCommunity] = useState("public");
   const [router, setRouter] = useState<RouterInfo | null>(null);
   const [routerMsg, setRouterMsg] = useState<string | null>(null);
+  const [speed, setSpeed] = useState<Speedtest | null>(null);
+  const [speedRunning, setSpeedRunning] = useState(false);
+  const [speedMsg, setSpeedMsg] = useState<string | null>(null);
+
+  const runSpeedtest = () => {
+    setSpeedRunning(true);
+    setSpeedMsg("Running… this uses data and takes ~30s.");
+    invoke<Speedtest | null>("run_speedtest")
+      .then((r) => {
+        if (r) {
+          setSpeed(r);
+          setSpeedMsg(null);
+        } else {
+          setSpeedMsg("Speed test unavailable — install librespeed-cli.");
+        }
+      })
+      .catch((e) => setSpeedMsg(String(e)))
+      .finally(() => setSpeedRunning(false));
+  };
 
   const queryRouter = () => {
     setRouterMsg("Querying…");
@@ -182,6 +210,9 @@ export default function App() {
     invoke<Traceroute | null>("latest_traceroute").then(setTrace).catch(() => {});
     invoke<LanDevice[]>("devices").then(setDevices).catch(() => {});
     invoke<Wifi | null>("wifi").then(setWifi).catch(() => {});
+    invoke<Speedtest[]>("speedtest_history", { limit: 1 })
+      .then((h) => h[0] && setSpeed(h[0]))
+      .catch(() => {});
   };
 
   const doExport = (kind: "connectivity" | "events") => {
@@ -240,6 +271,29 @@ export default function App() {
           value={status ? `${status.targets_up}/${status.targets_total}` : "—"}
           hint="reachable now"
         />
+      </section>
+
+      <section className="card">
+        <h2>Speed test</h2>
+        <div className="row">
+          <button className="btn" onClick={runSpeedtest} disabled={speedRunning}>
+            {speedRunning ? "Running…" : "Run speed test"}
+          </button>
+          {speed && (
+            <span className="status" style={{ margin: 0 }}>
+              {speed.server ?? ""}
+            </span>
+          )}
+        </div>
+        {speed && (
+          <div className="grid" style={{ marginTop: 12 }}>
+            <Stat label="Download" value={fmtRate((speed.download_mbps ?? 0) * 1e6)} />
+            <Stat label="Upload" value={fmtRate((speed.upload_mbps ?? 0) * 1e6)} />
+            <Stat label="Ping" value={fmtMs(speed.ping_ms)} />
+            <Stat label="Jitter" value={fmtMs(speed.jitter_ms)} />
+          </div>
+        )}
+        {speedMsg && <p className="status">{speedMsg}</p>}
       </section>
 
       <section className="card">

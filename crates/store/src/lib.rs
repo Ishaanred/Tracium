@@ -364,6 +364,36 @@ impl Store {
         Ok(BandwidthTotals { rx_bytes: rx, tx_bytes: tx })
     }
 
+    /// Record a speed-test result.
+    pub async fn insert_speedtest(&self, s: &SpeedtestRow) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO speedtests (ts, engine, server, download_mbps, upload_mbps, ping_ms, jitter_ms) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(s.ts)
+        .bind(&s.engine)
+        .bind(&s.server)
+        .bind(s.download_mbps)
+        .bind(s.upload_mbps)
+        .bind(s.ping_ms)
+        .bind(s.jitter_ms)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Recent speed-test results, newest first.
+    pub async fn speedtest_history(&self, limit: i64) -> Result<Vec<SpeedtestRow>> {
+        let rows = sqlx::query_as::<_, SpeedtestRow>(
+            "SELECT ts, engine, server, download_mbps, upload_mbps, ping_ms, jitter_ms \
+             FROM speedtests ORDER BY ts DESC LIMIT ?",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     /// Record a Wi-Fi link sample.
     pub async fn insert_wifi_sample(&self, s: &WifiSample) -> Result<()> {
         sqlx::query(
@@ -889,6 +919,18 @@ pub struct ConnectivitySample {
     pub up: bool,
 }
 
+/// A speed-test result (subset of `speedtests` we currently populate).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct SpeedtestRow {
+    pub ts: i64,
+    pub engine: Option<String>,
+    pub server: Option<String>,
+    pub download_mbps: Option<f64>,
+    pub upload_mbps: Option<f64>,
+    pub ping_ms: Option<f64>,
+    pub jitter_ms: Option<f64>,
+}
+
 /// A Wi-Fi link sample (subset of `wifi_samples` we currently populate).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct WifiSample {
@@ -1184,6 +1226,28 @@ mod tests {
         let totals = store.bandwidth_totals(0).await.unwrap();
         assert_eq!(totals.rx_bytes, 4_000);
         assert_eq!(totals.tx_bytes, 600);
+    }
+
+    #[tokio::test]
+    async fn speedtest_insert_and_history() {
+        let store = Store::open_in_memory().await.unwrap();
+        assert!(store.speedtest_history(10).await.unwrap().is_empty());
+        store
+            .insert_speedtest(&SpeedtestRow {
+                ts: 100,
+                engine: Some("librespeed-cli".into()),
+                server: Some("X".into()),
+                download_mbps: Some(95.4),
+                upload_mbps: Some(10.2),
+                ping_ms: Some(12.0),
+                jitter_ms: Some(1.4),
+            })
+            .await
+            .unwrap();
+        let h = store.speedtest_history(10).await.unwrap();
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].download_mbps, Some(95.4));
+        assert_eq!(h[0].engine.as_deref(), Some("librespeed-cli"));
     }
 
     #[tokio::test]

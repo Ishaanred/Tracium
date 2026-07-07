@@ -79,7 +79,12 @@ is a stable signal for latency/jitter/loss.
   - `security` (VPN heuristic via `netdev`; DoH via HTTPS + DoT via a 853
     connect probe; firewall status via native CLIs; local open-port scan),
   - `traceroute` (wraps the OS `traceroute`/`tracert` and parses output —
-    avoids the raw-socket privilege wall; per-hop IP/RTT + a route-change hash).
+    avoids the raw-socket privilege wall; per-hop IP/RTT + a route-change hash),
+  - `devices` (LAN neighbours from the ARP cache — `/proc/net/arp` / `arp -a`),
+  - `wifi` (active-link RSSI/band/channel/rate via `iw`/`netsh`),
+  - `router` (optional SNMP v2c via `csnmp`, on-demand/config-gated),
+  - `speedtest` (wraps `librespeed-cli --json`; download/upload/ping/jitter —
+    bufferbloat deferred, needs load generation).
   Unit-tested with local sockets / sample output; real-internet checks behind
   `--ignored`.
 - `netpulse-monitor` — samples every enabled internet target on an interval,
