@@ -25,7 +25,7 @@ pub mod security;
 pub mod speedtest;
 pub mod traceroute;
 pub mod wifi;
-pub use speedtest::{run_speedtest, SpeedResult};
+pub use speedtest::{run_speedtest, run_speedtest_with, SpeedResult};
 pub use devices::{discover_devices, ArpEntry};
 pub use router::{query_router, RouterInfo};
 pub use wifi::{get_wifi, WifiInfo};

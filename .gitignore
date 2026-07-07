@@ -10,6 +10,9 @@ dist
 # Tauri generated
 src-tauri/gen
 
+# Bundled sidecar binaries (fetched via scripts/fetch-sidecars.sh, not committed)
+src-tauri/binaries/
+
 # Local db / env
 *.db
 *.db-shm

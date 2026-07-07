@@ -98,10 +98,31 @@ async fn bandwidth_totals(
 
 /// Run a speed test now (invokes `librespeed-cli`), store it, and return it.
 /// On-demand only — speed tests consume data, so they aren't auto-scheduled.
+/// Resolve the librespeed-cli binary: env override, then a bundled sidecar next
+/// to the app executable, else `librespeed-cli` on PATH.
+fn resolve_speedtest_bin() -> String {
+    if let Ok(p) = std::env::var("NETPULSE_LIBRESPEED_CLI") {
+        if !p.is_empty() {
+            return p;
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let name = if cfg!(windows) { "librespeed-cli.exe" } else { "librespeed-cli" };
+            let cand = dir.join(name);
+            if cand.exists() {
+                return cand.to_string_lossy().into_owned();
+            }
+        }
+    }
+    "librespeed-cli".to_string()
+}
+
 #[tauri::command]
 async fn run_speedtest(state: State<'_, AppState>) -> Result<Option<SpeedtestRow>, String> {
+    let bin = resolve_speedtest_bin();
     let result =
-        netpulse_probe::run_speedtest(std::time::Duration::from_secs(90)).await;
+        netpulse_probe::run_speedtest_with(&bin, std::time::Duration::from_secs(90)).await;
     let Some(r) = result else { return Ok(None) };
     let row = SpeedtestRow {
         ts: now_ms(),

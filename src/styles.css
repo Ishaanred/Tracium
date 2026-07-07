@@ -141,6 +141,64 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
+  display: flex;
+  align-items: center;
+}
+
+/* Hover/focus info tooltip */
+.tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.tip__icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  color: var(--muted);
+  font-size: 10px;
+  font-style: italic;
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 12px;
+  text-align: center;
+  cursor: help;
+  text-transform: none;
+  letter-spacing: 0;
+  transition: color 0.12s, border-color 0.12s;
+}
+.tip:hover .tip__icon,
+.tip:focus-within .tip__icon {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.tip__bubble {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 230px;
+  background: #0a101e;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  line-height: 1.45;
+  color: var(--text);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+  z-index: 30;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.tip:hover .tip__bubble,
+.tip:focus-within .tip__bubble {
+  opacity: 1;
 }
 
 .status {

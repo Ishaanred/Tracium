@@ -53,6 +53,21 @@ cargo test -p netpulse-store
   Without these, `cargo build`/`pnpm tauri dev` fail at the `webkit2gtk` build
   step. The `netpulse-store` tests above do **not** need them.
 
+## Bundled tools (sidecars)
+
+The speed test uses `librespeed-cli`, shipped as a Tauri **sidecar** (bundled
+next to the app, invoked by resolved path — not the user's PATH). The binaries
+are **not committed**; fetch them for your platform before dev/build:
+
+```bash
+./scripts/fetch-sidecars.sh    # downloads into src-tauri/binaries/ (gitignored)
+```
+
+Runtime resolution order (`resolve_speedtest_bin`): `$NETPULSE_LIBRESPEED_CLI`
+→ a `librespeed-cli` next to the app executable (the bundled sidecar) → PATH.
+So a dev without the sidecar still works if `librespeed-cli` is on PATH.
+CI must run `fetch-sidecars.sh` before `pnpm tauri build`.
+
 ## Common commands
 
 ```bash

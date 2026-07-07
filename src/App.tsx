@@ -264,17 +264,31 @@ export default function App() {
       {error && <p className="status status--bad">{error}</p>}
 
       <section className="grid">
-        <Stat label="Latency" value={fmtMs(status?.best_latency_ms)} hint="best of targets" />
-        <Stat label="Packet loss" value={fmtPct(status?.avg_loss_pct)} hint="this cycle" />
+        <Stat
+          label="Latency"
+          value={fmtMs(status?.best_latency_ms)}
+          hint="best of targets"
+          info="Round-trip time for a packet to reach a server and come back. Lower is snappier — under ~30 ms feels instant; over ~150 ms is noticeable in calls and games."
+        />
+        <Stat
+          label="Packet loss"
+          value={fmtPct(status?.avg_loss_pct)}
+          hint="this cycle"
+          info="Share of probe packets that never came back. 0% is ideal; even 1–2% causes stutter in calls, games and video."
+        />
         <Stat
           label="Targets up"
           value={status ? `${status.targets_up}/${status.targets_total}` : "—"}
           hint="reachable now"
+          info="How many of the monitored servers responded this cycle. The internet is only marked offline when every target fails."
         />
       </section>
 
       <section className="card">
-        <h2>Speed test</h2>
+        <CardTitle
+          title="Speed test"
+          info="On-demand download/upload throughput + ping via librespeed-cli. Uses data and takes ~30s, so it isn't run automatically."
+        />
         <div className="row">
           <button className="btn" onClick={runSpeedtest} disabled={speedRunning}>
             {speedRunning ? "Running…" : "Run speed test"}
@@ -297,7 +311,10 @@ export default function App() {
       </section>
 
       <section className="card">
-        <h2>Quality of experience</h2>
+        <CardTitle
+          title="Quality of experience"
+          info="0–100 scores estimating how good each activity feels right now, computed from latency, jitter and packet loss. 80+ is great, under 50 is rough."
+        />
         {status?.qoe ? (
           <div className="grid">
             <Score label="Gaming" value={status.qoe.gaming} />
@@ -324,10 +341,19 @@ export default function App() {
         <h2>Last 24 hours</h2>
         {rel ? (
           <div className="grid">
-            <Stat label="Uptime" value={fmtPct(rel.uptime_pct)} hint={`${rel.samples} samples`} />
-            <Stat label="Avg latency" value={fmtMs(rel.avg_latency_ms)} />
-            <Stat label="Avg loss" value={fmtPct(rel.avg_loss_pct)} />
-            <Stat label="Disconnects" value={String(rel.disconnects)} />
+            <Stat
+              label="Uptime"
+              value={fmtPct(rel.uptime_pct)}
+              hint={`${rel.samples} samples`}
+              info="Share of samples in the last 24h where the internet was reachable. Measured from your machine, not your ISP's claims."
+            />
+            <Stat label="Avg latency" value={fmtMs(rel.avg_latency_ms)} info="Average round-trip time across all samples in the window." />
+            <Stat label="Avg loss" value={fmtPct(rel.avg_loss_pct)} info="Average packet loss across the window." />
+            <Stat
+              label="Disconnects"
+              value={String(rel.disconnects)}
+              info="Number of full outages (every target unreachable) that started in the window."
+            />
           </div>
         ) : (
           <p className="status">Gathering data…</p>
@@ -335,13 +361,37 @@ export default function App() {
       </section>
 
       <section className="card">
-        <h2>Security</h2>
+        <CardTitle
+          title="Security"
+          info="A snapshot of your network's security posture — firewall, encrypted DNS, VPN and locally-open ports."
+        />
         {security ? (
           <div className="grid">
-            <Flag label="Firewall" value={security.firewall_active} goodWhenTrue />
-            <Flag label="DNS-over-HTTPS" value={security.doh_active} goodWhenTrue />
-            <Flag label="DNS-over-TLS" value={security.dot_active} goodWhenTrue />
-            <Flag label="VPN" value={security.vpn_detected} goodWhenTrue={false} neutral />
+            <Flag
+              label="Firewall"
+              value={security.firewall_active}
+              goodWhenTrue
+              info="Whether the OS firewall is active (ufw/firewalld on Linux, Windows Firewall)."
+            />
+            <Flag
+              label="DNS-over-HTTPS"
+              value={security.doh_active}
+              goodWhenTrue
+              info="Encrypted DNS over HTTPS is reachable — your lookups can be hidden from the local network/ISP."
+            />
+            <Flag
+              label="DNS-over-TLS"
+              value={security.dot_active}
+              goodWhenTrue
+              info="The encrypted-DNS port (853) is reachable — another way to keep DNS private."
+            />
+            <Flag
+              label="VPN"
+              value={security.vpn_detected}
+              goodWhenTrue={false}
+              neutral
+              info="Whether a VPN/tunnel interface (wg, tun, tap…) is currently active."
+            />
             <Stat
               label="Open ports"
               value={
@@ -350,6 +400,7 @@ export default function App() {
                   : "—"
               }
               hint="locally listening"
+              info="Ports on THIS machine currently accepting connections (a local self-audit — not what the public internet can reach)."
             />
           </div>
         ) : (
@@ -358,7 +409,10 @@ export default function App() {
       </section>
 
       <section className="card">
-        <h2>Bandwidth</h2>
+        <CardTitle
+          title="Bandwidth"
+          info="Live throughput through this machine's network interfaces, plus totals moved today. Not per-app or per-device."
+        />
         <div className="grid">
           <Stat label="Download" value={fmtRate(bw?.rx_bps)} hint="live" />
           <Stat label="Upload" value={fmtRate(bw?.tx_bps)} hint="live" />
@@ -368,7 +422,10 @@ export default function App() {
       </section>
 
       <section className="card">
-        <h2>DNS resolvers — last 24h</h2>
+        <CardTitle
+          title="DNS resolvers — last 24h"
+          info="DNS turns names like example.com into IP addresses before anything loads. This compares how fast each resolver answers — lower is better."
+        />
         {dns.length === 0 ? (
           <p className="status">No DNS samples yet.</p>
         ) : (
@@ -390,19 +447,35 @@ export default function App() {
         <section className="card">
           <h2>Wi-Fi{wifi.ssid ? ` · ${wifi.ssid}` : ""}</h2>
           <div className="grid">
-            <Stat label="Signal" value={wifi.rssi_dbm != null ? `${wifi.rssi_dbm} dBm` : "—"} />
-            <Stat label="Band" value={wifi.band ? `${wifi.band} GHz` : "—"} />
-            <Stat label="Channel" value={wifi.channel != null ? String(wifi.channel) : "—"} />
+            <Stat
+              label="Signal"
+              value={wifi.rssi_dbm != null ? `${wifi.rssi_dbm} dBm` : "—"}
+              info="Wi-Fi signal strength in dBm (closer to 0 is stronger): −50 excellent, −67 good, below −70 weak."
+            />
+            <Stat
+              label="Band"
+              value={wifi.band ? `${wifi.band} GHz` : "—"}
+              info="2.4 GHz reaches further but is slower/more congested; 5/6 GHz is faster over shorter range."
+            />
+            <Stat
+              label="Channel"
+              value={wifi.channel != null ? String(wifi.channel) : "—"}
+              info="The radio channel in use. Neighbours on the same channel cause interference."
+            />
             <Stat
               label="Link rate"
               value={wifi.link_speed_mbps != null ? `${wifi.link_speed_mbps} Mbps` : "—"}
+              info="Negotiated link speed with the access point (a ceiling, not your internet speed)."
             />
           </div>
         </section>
       )}
 
       <section className="card">
-        <h2>Devices on network{devices.length ? ` · ${devices.length}` : ""}</h2>
+        <h2>
+          Devices on network{devices.length ? ` · ${devices.length}` : ""}
+          <Info text="Devices seen on your local network, from the ARP cache (neighbours this machine has recently talked to). Not a full active scan." />
+        </h2>
         {devices.length === 0 ? (
           <p className="status">No devices discovered yet.</p>
         ) : (
@@ -419,7 +492,10 @@ export default function App() {
       </section>
 
       <section className="card">
-        <h2>Route{trace ? ` to ${trace.target} · ${trace.hop_count} hops` : ""}</h2>
+        <h2>
+          Route{trace ? ` to ${trace.target} · ${trace.hop_count} hops` : ""}
+          <Info text="The path your packets take to reach the target, hop by hop, with the round-trip time to each hop. More hops = more places for delays." />
+        </h2>
         {trace && trace.hops.length > 0 ? (
           <ul className="hops">
             {trace.hops.map((h) => (
@@ -558,11 +634,13 @@ function Flag({
   value,
   goodWhenTrue,
   neutral,
+  info,
 }: {
   label: string;
   value: boolean | null;
   goodWhenTrue: boolean;
   neutral?: boolean;
+  info?: string;
 }) {
   let color = "var(--muted)";
   let text = "Unknown";
@@ -573,7 +651,10 @@ function Flag({
   }
   return (
     <div className="stat">
-      <span className="stat__label">{label}</span>
+      <span className="stat__label">
+        {label}
+        {info && <Info text={info} />}
+      </span>
       <span className="stat__value" style={{ color, fontSize: 20 }}>
         {text}
       </span>
@@ -602,12 +683,48 @@ function Sparkline({ points }: { points: number[] }) {
   );
 }
 
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Info({ text }: { text: string }) {
+  return (
+    <span className="tip" tabIndex={0}>
+      <span className="tip__icon" aria-hidden>
+        i
+      </span>
+      <span className="tip__bubble" role="tooltip">
+        {text}
+      </span>
+    </span>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  hint,
+  info,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  info?: string;
+}) {
   return (
     <div className="stat">
-      <span className="stat__label">{label}</span>
+      <span className="stat__label">
+        {label}
+        {info && <Info text={info} />}
+      </span>
       <span className="stat__value">{value}</span>
       {hint && <span className="stat__hint">{hint}</span>}
     </div>
+  );
+}
+
+/** A section heading with an optional hover explanation. */
+function CardTitle({ title, info }: { title: string; info?: string }) {
+  return (
+    <h2>
+      {title}
+      {info && <Info text={info} />}
+    </h2>
   );
 }

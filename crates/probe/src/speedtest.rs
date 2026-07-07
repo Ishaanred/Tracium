@@ -23,15 +23,18 @@ pub struct SpeedResult {
     pub server: Option<String>,
 }
 
-/// Run `librespeed-cli --json` and parse the result. `to` bounds the whole run.
+/// Run the default `librespeed-cli` (on PATH). See [`run_speedtest_with`].
 pub async fn run_speedtest(to: Duration) -> Option<SpeedResult> {
-    let output = timeout(
-        to,
-        tokio::process::Command::new("librespeed-cli").arg("--json").output(),
-    )
-    .await
-    .ok()?
-    .ok()?;
+    run_speedtest_with("librespeed-cli", to).await
+}
+
+/// Run a specific `librespeed-cli` binary (e.g. a bundled sidecar path) with
+/// `--json` and parse the result. `to` bounds the whole run.
+pub async fn run_speedtest_with(bin: &str, to: Duration) -> Option<SpeedResult> {
+    let output = timeout(to, tokio::process::Command::new(bin).arg("--json").output())
+        .await
+        .ok()?
+        .ok()?;
     if !output.status.success() {
         return None;
     }
