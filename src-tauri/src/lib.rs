@@ -31,13 +31,7 @@ struct DbHealth {
 
 #[tauri::command]
 async fn db_health(state: State<'_, AppState>) -> Result<DbHealth, String> {
-    let table_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM sqlite_master WHERE type='table' \
-         AND name NOT LIKE 'sqlite_%' AND name <> '_sqlx_migrations'",
-    )
-    .fetch_one(state.store.pool())
-    .await
-    .map_err(|e| e.to_string())?;
+    let table_count = state.store.table_count().await.map_err(|e| e.to_string())?;
     Ok(DbHealth { ok: true, table_count })
 }
 

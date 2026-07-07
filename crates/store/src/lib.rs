@@ -70,6 +70,17 @@ impl Store {
         &self.pool
     }
 
+    /// Number of application tables (excludes sqlite internals + migrations).
+    pub async fn table_count(&self) -> Result<i64> {
+        let n = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' \
+             AND name NOT LIKE 'sqlite_%' AND name <> '_sqlx_migrations'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(n)
+    }
+
     /// All probe targets, ordered by id.
     pub async fn list_targets(&self) -> Result<Vec<Target>> {
         let rows = sqlx::query_as::<_, Target>(
