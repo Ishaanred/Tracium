@@ -151,9 +151,13 @@ impl Monitor {
                 })
                 .await?;
 
-            loss_sum += out.loss_pct;
+            // Quality aggregates (loss/latency/jitter) count only *reachable*
+            // targets. A fully-down target — e.g. an IPv6 host on a v4-only
+            // network — isn't "100% packet loss on your connection", it's an
+            // unavailable path; including it would wreck loss and QoE.
             if out.up {
                 targets_up += 1;
+                loss_sum += out.loss_pct;
                 if let Some(avg) = out.rtt_avg {
                     best_latency = Some(best_latency.map_or(avg, |b| b.min(avg)));
                 }
@@ -171,7 +175,7 @@ impl Monitor {
 
         self.update_outage(now, online, all_down).await?;
 
-        let avg_loss = (total > 0).then(|| loss_sum / total as f64);
+        let avg_loss = (targets_up > 0).then(|| loss_sum / targets_up as f64);
 
         // Quality-of-experience scores from this cycle's best latency + mean
         // jitter + mean loss. Persisted for trending; None while offline.

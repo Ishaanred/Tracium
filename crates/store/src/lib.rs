@@ -690,9 +690,16 @@ impl Store {
     }
 
     /// Reliability summary over samples with `ts >= since`.
+    ///
+    /// Uptime is measured **per cycle** (a cycle = one timestamp across all
+    /// targets): the internet counts as up for a cycle if *any* target
+    /// responded. Loss/latency averages consider only reachable samples, so a
+    /// permanently-down path (e.g. IPv6 on a v4-only network) doesn't skew them.
     pub async fn reliability_since(&self, since: i64) -> Result<Reliability> {
         let (samples, up_samples): (i64, i64) = sqlx::query_as(
-            "SELECT count(*), coalesce(sum(up), 0) FROM connectivity_samples WHERE ts >= ?",
+            "SELECT count(DISTINCT ts), \
+                    count(DISTINCT CASE WHEN up = 1 THEN ts END) \
+             FROM connectivity_samples WHERE ts >= ?",
         )
         .bind(since)
         .fetch_one(&self.pool)
@@ -705,8 +712,9 @@ impl Store {
         .fetch_one(&self.pool)
         .await?;
 
+        // Only reachable samples (up = 1) count toward average loss.
         let avg_loss: Option<f64> = sqlx::query_scalar(
-            "SELECT avg(loss_pct) FROM connectivity_samples WHERE ts >= ?",
+            "SELECT avg(loss_pct) FROM connectivity_samples WHERE ts >= ? AND up = 1",
         )
         .bind(since)
         .fetch_one(&self.pool)
@@ -1484,6 +1492,39 @@ mod tests {
         let lines: Vec<&str> = csv.lines().collect();
         assert_eq!(lines.len(), 2);
         assert!(lines[1].starts_with("500,1,4,5,5,0"));
+    }
+
+    #[tokio::test]
+    async fn reliability_ignores_a_dead_stack() {
+        // Two cycles, each with two reachable v4 targets (0% loss) and one
+        // permanently-down v6 target (100% loss). Uptime should be 100% and
+        // avg loss 0% — the dead path must not skew the numbers.
+        let store = Store::open_in_memory().await.unwrap();
+        store.seed_default_targets(0).await.unwrap(); // creates target ids 1,2,3
+        let mk = |ts: i64, tid: i64, ipv: i64, up: bool| NewConnectivitySample {
+            ts,
+            target_id: tid,
+            ip_version: ipv,
+            sent: 5,
+            received: if up { 5 } else { 0 },
+            loss_pct: if up { 0.0 } else { 100.0 },
+            rtt_min: up.then_some(10.0),
+            rtt_avg: up.then_some(12.0),
+            rtt_max: up.then_some(15.0),
+            rtt_jitter: up.then_some(1.0),
+            up,
+        };
+        for ts in [1000, 2000] {
+            store.insert_connectivity_sample(mk(ts, 1, 4, true)).await.unwrap();
+            store.insert_connectivity_sample(mk(ts, 2, 4, true)).await.unwrap();
+            store.insert_connectivity_sample(mk(ts, 3, 6, false)).await.unwrap();
+        }
+        let r = store.reliability_since(0).await.unwrap();
+        assert_eq!(r.samples, 2, "2 cycles");
+        assert_eq!(r.up_samples, 2, "both cycles had a reachable target");
+        assert_eq!(r.uptime_pct, 100.0, "internet was up every cycle");
+        assert_eq!(r.avg_loss_pct, Some(0.0), "dead v6 target excluded from loss");
+        assert_eq!(r.avg_latency_ms, Some(12.0));
     }
 
     #[tokio::test]
