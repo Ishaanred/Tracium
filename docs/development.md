@@ -77,8 +77,11 @@ is a stable signal for latency/jitter/loss.
   - `netinfo` (public IP via HTTP, `ureq`),
   - `bandwidth` (interface byte-rate + per-iface deltas, `sysinfo`),
   - `security` (VPN heuristic via `netdev`; DoH via HTTPS + DoT via a 853
-    connect probe; firewall status via native CLIs; local open-port scan).
-  Unit-tested with local sockets; real-internet checks behind `--ignored`.
+    connect probe; firewall status via native CLIs; local open-port scan),
+  - `traceroute` (wraps the OS `traceroute`/`tracert` and parses output —
+    avoids the raw-socket privilege wall; per-hop IP/RTT + a route-change hash).
+  Unit-tested with local sockets / sample output; real-internet checks behind
+  `--ignored`.
 - `netpulse-monitor` — samples every enabled internet target on an interval,
   writes `connectivity_samples`, and opens/closes `outages` (internet is "down"
   only when *every* target fails a cycle). Emits a `status` event to the UI.

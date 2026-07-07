@@ -163,15 +163,36 @@ body {
   display: block;
 }
 
-.events {
+.events,
+.hops {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 220px;
+  max-height: 260px;
   overflow-y: auto;
+}
+.hops li {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 14px;
+}
+.hops__no {
+  width: 24px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.hops__ip {
+  font-family: ui-monospace, monospace;
+}
+.hops__rtt {
+  margin-left: auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .events li {
   display: flex;

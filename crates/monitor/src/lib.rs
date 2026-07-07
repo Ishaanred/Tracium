@@ -12,8 +12,8 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use netpulse_probe::security::{check_doh, check_dot, detect_vpn, firewall_active, scan_local_ports, COMMON_PORTS};
-use netpulse_probe::{dns_lookup, probe, public_ip, BandwidthSampler, ProbeConfig};
-use netpulse_store::{NewConnectivitySample, SecuritySnapshot, Store, StoreError};
+use netpulse_probe::{dns_lookup, probe, public_ip, traceroute, BandwidthSampler, ProbeConfig};
+use netpulse_store::{NewConnectivitySample, SecuritySnapshot, Store, StoreError, TracerouteHop};
 
 /// Resolvers compared on the DNS cadence (label, IP).
 const DNS_RESOLVERS: &[(&str, &str)] =
@@ -47,6 +47,12 @@ pub struct MonitorConfig {
     pub security_interval: Duration,
     /// Timeout for individual security probes (DoH/DoT).
     pub security_timeout: Duration,
+    /// How often to run a traceroute.
+    pub traceroute_interval: Duration,
+    /// Traceroute target + limits.
+    pub traceroute_target: String,
+    pub traceroute_max_hops: u8,
+    pub traceroute_timeout: Duration,
 }
 
 impl Default for MonitorConfig {
@@ -62,6 +68,10 @@ impl Default for MonitorConfig {
             public_ip_timeout: Duration::from_secs(5),
             security_interval: Duration::from_secs(300),
             security_timeout: Duration::from_secs(4),
+            traceroute_interval: Duration::from_secs(600),
+            traceroute_target: "1.1.1.1".to_string(),
+            traceroute_max_hops: 30,
+            traceroute_timeout: Duration::from_secs(25),
         }
     }
 }
@@ -210,6 +220,44 @@ impl Monitor {
         Ok(())
     }
 
+    /// Run a traceroute to the configured target, persist it, and emit a
+    /// `route_change` event if the path differs from the previous run.
+    pub async fn sample_traceroute(&self, now: i64) -> Result<(), StoreError> {
+        let target = &self.config.traceroute_target;
+        let Some(trace) = traceroute(
+            target,
+            self.config.traceroute_max_hops,
+            self.config.traceroute_timeout,
+        )
+        .await
+        else {
+            return Ok(()); // tool missing / timed out — skip this round
+        };
+
+        let previous = self.store.last_route_hash(target).await?;
+        let hops: Vec<TracerouteHop> = trace
+            .hops
+            .iter()
+            .map(|h| TracerouteHop {
+                hop_no: h.hop_no as i64,
+                ip: h.ip.clone(),
+                hostname: None,
+                rtt_ms: h.rtt_ms,
+            })
+            .collect();
+        self.store.save_traceroute(now, target, &trace.route_hash, &hops).await?;
+
+        if let Some(prev) = previous {
+            if prev != trace.route_hash {
+                let payload = format!(r#"{{"target":"{target}","hops":{}}}"#, trace.hops.len());
+                self.store
+                    .insert_event(now, "route_change", "warn", None, Some(&payload))
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Gather a security-posture snapshot (VPN heuristic, DoH/DoT reachability,
     /// firewall status, locally-listening ports) and persist it. Blocking
     /// probes run off the async runtime.
@@ -286,6 +334,7 @@ impl Monitor {
         let mut last_dns = 0i64; // 0 => sample on the first cycle
         let mut last_pubip = 0i64;
         let mut last_security = 0i64;
+        let mut last_trace = 0i64;
         let mut bandwidth = BandwidthSampler::new();
 
         let mut ticker = tokio::time::interval(self.config.interval);
@@ -293,6 +342,7 @@ impl Monitor {
         let dns_ms = self.config.dns_interval.as_millis() as i64;
         let pubip_ms = self.config.public_ip_interval.as_millis() as i64;
         let security_ms = self.config.security_interval.as_millis() as i64;
+        let trace_ms = self.config.traceroute_interval.as_millis() as i64;
         loop {
             ticker.tick().await;
             let now = now_ms();
@@ -330,6 +380,12 @@ impl Monitor {
                     eprintln!("netpulse security sample failed: {e}");
                 }
                 last_security = now;
+            }
+            if now - last_trace >= trace_ms {
+                if let Err(e) = self.sample_traceroute(now).await {
+                    eprintln!("netpulse traceroute failed: {e}");
+                }
+                last_trace = now;
             }
             if now - last_maint >= maint_ms {
                 if let Err(e) = self.store.maintain(now).await {
@@ -369,6 +425,10 @@ mod tests {
             public_ip_timeout: Duration::from_millis(300),
             security_interval: Duration::from_secs(300),
             security_timeout: Duration::from_millis(300),
+            traceroute_interval: Duration::from_secs(600),
+            traceroute_target: "1.1.1.1".to_string(),
+            traceroute_max_hops: 30,
+            traceroute_timeout: Duration::from_secs(25),
         }
     }
 

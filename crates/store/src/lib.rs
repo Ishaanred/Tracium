@@ -364,6 +364,74 @@ impl Store {
         Ok(BandwidthTotals { rx_bytes: rx, tx_bytes: tx })
     }
 
+    /// Save a traceroute (parent + hops) and return the new traceroute id.
+    pub async fn save_traceroute(
+        &self,
+        ts: i64,
+        target: &str,
+        route_hash: &str,
+        hops: &[TracerouteHop],
+    ) -> Result<i64> {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO traceroutes (ts, target, hop_count, route_hash) \
+             VALUES (?, ?, ?, ?) RETURNING id",
+        )
+        .bind(ts)
+        .bind(target)
+        .bind(hops.len() as i64)
+        .bind(route_hash)
+        .fetch_one(&self.pool)
+        .await?;
+
+        for h in hops {
+            sqlx::query(
+                "INSERT INTO traceroute_hops \
+                 (traceroute_id, hop_no, ip, hostname, asn, as_name, rtt_ms, loss_pct) \
+                 VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL)",
+            )
+            .bind(id)
+            .bind(h.hop_no)
+            .bind(&h.ip)
+            .bind(&h.hostname)
+            .bind(h.rtt_ms)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(id)
+    }
+
+    /// The route hash of the most recent traceroute to `target`, if any.
+    pub async fn last_route_hash(&self, target: &str) -> Result<Option<String>> {
+        let h = sqlx::query_scalar::<_, String>(
+            "SELECT route_hash FROM traceroutes WHERE target = ? ORDER BY ts DESC LIMIT 1",
+        )
+        .bind(target)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(h)
+    }
+
+    /// The most recent traceroute (any target) with its hops, for display.
+    pub async fn latest_traceroute(&self) -> Result<Option<TracerouteView>> {
+        let parent = sqlx::query_as::<_, (i64, i64, String, i64, String)>(
+            "SELECT id, ts, target, hop_count, route_hash \
+             FROM traceroutes ORDER BY ts DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((id, ts, target, hop_count, route_hash)) = parent else {
+            return Ok(None);
+        };
+        let hops = sqlx::query_as::<_, TracerouteHopRow>(
+            "SELECT hop_no, ip, hostname, rtt_ms FROM traceroute_hops \
+             WHERE traceroute_id = ? ORDER BY hop_no",
+        )
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(Some(TracerouteView { id, ts, target, hop_count, route_hash, hops }))
+    }
+
     /// Record a full security-posture snapshot.
     pub async fn insert_security_snapshot(&self, s: &SecuritySnapshot) -> Result<()> {
         sqlx::query(
@@ -751,6 +819,35 @@ pub struct ConnectivitySample {
     pub up: bool,
 }
 
+/// A traceroute hop to persist.
+#[derive(Debug, Clone)]
+pub struct TracerouteHop {
+    pub hop_no: i64,
+    pub ip: Option<String>,
+    pub hostname: Option<String>,
+    pub rtt_ms: Option<f64>,
+}
+
+/// A stored traceroute hop (for display).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct TracerouteHopRow {
+    pub hop_no: i64,
+    pub ip: Option<String>,
+    pub hostname: Option<String>,
+    pub rtt_ms: Option<f64>,
+}
+
+/// A traceroute with its hops.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TracerouteView {
+    pub id: i64,
+    pub ts: i64,
+    pub target: String,
+    pub hop_count: i64,
+    pub route_hash: String,
+    pub hops: Vec<TracerouteHopRow>,
+}
+
 /// A security-posture snapshot. Fields are `None` when a probe couldn't
 /// determine a value (or isn't implemented yet, e.g. NAT/UPnP).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
@@ -991,6 +1088,28 @@ mod tests {
         let totals = store.bandwidth_totals(0).await.unwrap();
         assert_eq!(totals.rx_bytes, 4_000);
         assert_eq!(totals.tx_bytes, 600);
+    }
+
+    #[tokio::test]
+    async fn traceroute_save_and_read() {
+        let store = Store::open_in_memory().await.unwrap();
+        assert!(store.latest_traceroute().await.unwrap().is_none());
+        assert!(store.last_route_hash("1.1.1.1").await.unwrap().is_none());
+
+        let hops = vec![
+            TracerouteHop { hop_no: 1, ip: Some("192.168.1.1".into()), hostname: None, rtt_ms: Some(1.2) },
+            TracerouteHop { hop_no: 2, ip: None, hostname: None, rtt_ms: None },
+            TracerouteHop { hop_no: 3, ip: Some("1.1.1.1".into()), hostname: None, rtt_ms: Some(9.0) },
+        ];
+        store.save_traceroute(500, "1.1.1.1", "abc123", &hops).await.unwrap();
+
+        assert_eq!(store.last_route_hash("1.1.1.1").await.unwrap().as_deref(), Some("abc123"));
+        let view = store.latest_traceroute().await.unwrap().unwrap();
+        assert_eq!(view.target, "1.1.1.1");
+        assert_eq!(view.hop_count, 3);
+        assert_eq!(view.hops.len(), 3);
+        assert_eq!(view.hops[0].ip.as_deref(), Some("192.168.1.1"));
+        assert!(view.hops[1].ip.is_none());
     }
 
     #[tokio::test]

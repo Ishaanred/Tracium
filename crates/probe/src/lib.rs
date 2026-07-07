@@ -20,10 +20,12 @@ pub mod bandwidth;
 pub mod dns;
 pub mod netinfo;
 pub mod security;
+pub mod traceroute;
 pub use bandwidth::{BandwidthSample, BandwidthSampler};
 pub use dns::{dns_lookup, DnsResult};
 pub use netinfo::public_ip;
 pub use security::{check_doh, check_dot, detect_vpn, firewall_active, scan_local_ports, VpnStatus};
+pub use traceroute::{traceroute, Hop, TraceResult};
 
 /// How to run one probe cycle against a target.
 #[derive(Debug, Clone)]

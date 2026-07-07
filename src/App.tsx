@@ -59,6 +59,17 @@ interface Security {
   open_ports: string | null;
 }
 
+interface TraceHop {
+  hop_no: number;
+  ip: string | null;
+  rtt_ms: number | null;
+}
+interface Traceroute {
+  target: string;
+  hop_count: number;
+  hops: TraceHop[];
+}
+
 interface Reliability {
   samples: number;
   up_samples: number;
@@ -107,6 +118,7 @@ export default function App() {
   const [bw, setBw] = useState<BandwidthNow | null>(null);
   const [bwTotal, setBwTotal] = useState<BandwidthTotals | null>(null);
   const [security, setSecurity] = useState<Security | null>(null);
+  const [trace, setTrace] = useState<Traceroute | null>(null);
   const [targets, setTargets] = useState<Target[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
@@ -129,6 +141,7 @@ export default function App() {
       .then(setBwTotal)
       .catch(() => {});
     invoke<Security | null>("security_status").then(setSecurity).catch(() => {});
+    invoke<Traceroute | null>("latest_traceroute").then(setTrace).catch(() => {});
   };
 
   const doExport = (kind: "connectivity" | "events") => {
@@ -276,6 +289,25 @@ export default function App() {
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      <section className="card">
+        <h2>Route{trace ? ` to ${trace.target} · ${trace.hop_count} hops` : ""}</h2>
+        {trace && trace.hops.length > 0 ? (
+          <ul className="hops">
+            {trace.hops.map((h) => (
+              <li key={h.hop_no}>
+                <span className="hops__no">{h.hop_no}</span>
+                <span className="hops__ip">{h.ip ?? "* (no reply)"}</span>
+                <span className="hops__rtt">{h.rtt_ms != null ? `${h.rtt_ms.toFixed(1)} ms` : ""}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="status">
+            No traceroute yet — needs the <code>traceroute</code>/<code>tracert</code> tool installed.
+          </p>
         )}
       </section>
 
