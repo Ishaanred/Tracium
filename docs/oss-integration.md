@@ -77,16 +77,42 @@ backend** and bundle `librespeed-cli`, or (b) **write our own client** against
 public LibreSpeed community servers (Crusader-inspired for the bufferbloat part).
 Because it needs infra, this is *not* a quick add — schedule accordingly.
 
-## Per-application bandwidth — ✓ verified (hardest; opt-in)
+## Step 7 — Per-app / per-device bandwidth — DEFERRED BY DECISION
 
-- **`bandwhich`** — **CLI only, GPL-3.0**: invoke as an external process only,
-  never link. Needs **root/CAP_NET_ADMIN/CAP_BPF** (eBPF/libpcap) on Linux and
-  **Npcap** on Windows.
+> **Status:** intentionally postponed (decision, 2026-07-07). It is the one
+> feature that cannot be done within NetPulse's unprivileged design. Everything
+> else we shipped is privilege-free (TCP-connect not ICMP, ARP *cache* not
+> *scan*, wrapping the OS traceroute). Step 7 breaks that, so it waits until
+> there's a clear need and a decision to accept elevation.
+
+**Per-application bandwidth — needs privileges/capture.**
+- The OS exposes **no per-process byte counters** without elevation (no `/proc`
+  file for it).
+- Real options all require elevation: **eBPF** or **libpcap** on Linux
+  (root / `CAP_NET_ADMIN` / `CAP_BPF`), **Npcap** + admin on Windows, or
+  shelling out to **`bandwhich`** / **`nethogs`** (both **GPL-3.0** → external
+  process only, never linked) with `sudo`/`setcap`.
 - **No mature cross-platform Rust crate** — realistically native per-OS collectors.
 
-**Pick:** native per-OS collectors gated behind an explicit "enable per-app
-monitoring (needs elevation)" toggle; optionally shell out to `bandwhich` on
-Linux. Low priority.
+**Per-device bandwidth — mostly infeasible on a normal LAN.**
+- One host **cannot see another device's traffic** on a switched network.
+  It requires either the **router** to report per-client stats (SNMP/vendor
+  API — rare on consumer gear) or **promiscuous packet capture** (privileged,
+  and still limited on a switch).
+- Device *discovery* (count/list) is already done in step 3 via the ARP cache;
+  only the per-device *byte* half is blocked.
+
+**When revisited — the plan:**
+1. **Per-app (Linux first):** an explicit opt-in — *"Enable per-app monitoring
+   (requires elevated permissions)"* — that shells out to `bandwhich`/`nethogs`
+   with `setcap`/`sudo` and parses their output (same wrap-the-tool pattern as
+   traceroute/librespeed). Windows later via ETW.
+2. **Per-device:** only where the **router** exposes per-client counters
+   (extends the step-5 `csnmp` work); otherwise surfaced as
+   "requires router support," not faked.
+
+Keep this panel clearly labelled as needing elevation so the default install
+stays zero-privilege.
 
 ## Device discovery / router stats — ✓ verified
 
@@ -112,8 +138,9 @@ router SNMP or capture — hardest, schedule last.
 4. **Wi-Fi** — `wifiscanner` stub, then platform-native (`neli`/nl80211 + `windows` crate) for the full set.
 5. **Router stats** — `csnmp`, where the router supports SNMP.
 6. **Speed test + bufferbloat** — needs a LibreSpeed backend decision (host vs bundle vs own client); more infra than code.
-7. **Per-app / per-device bandwidth** — privileged, native, opt-in; hardest.
-8. **AI Insights** — our own analysis layer over all of the above.
+7. **Per-app / per-device bandwidth** — **DEFERRED BY DECISION** (privileged/
+   capture; breaks the unprivileged design — see the dedicated section above).
+8. **AI Insights** — our own analysis layer over all of the above (future).
 
 ## Verified stack summary
 

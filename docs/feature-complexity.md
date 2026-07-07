@@ -123,8 +123,8 @@ speed) is the **easiest** of the complex tier — do it first within this domain
 |---|---|---|
 | Current Download & Upload Rate | **One-shot** | Delta of local interface byte counters. |
 | Daily/Weekly/Monthly Totals | **One-shot** | Accumulate the deltas. |
-| Per-Application Breakdown | **Complex** | Per-process accounting: eBPF/nethogs (Linux, privileged), ETW (Windows). |
-| Per-Device Breakdown | **Complex** | Router SNMP/API or capture. |
+| Per-Application Breakdown | **Complex — DEFERRED** | Per-process accounting needs elevation: eBPF/nethogs/bandwhich (Linux, privileged), ETW (Windows). Breaks the unprivileged design; parked by decision — see `oss-integration.md` step 7. |
+| Per-Device Breakdown | **Complex — DEFERRED** | Can't see other devices' traffic on a switched LAN without the router (SNMP per-client, rare) or promiscuous capture. Parked; see `oss-integration.md` step 7. |
 
 ## Quality of Experience (QoE)
 
