@@ -215,6 +215,48 @@ Every dependency will be transparently credited. Good open source deserves recog
 
 ---
 
+## Install & Run
+
+> Prebuilt downloads (`.deb` / `.AppImage` / `.msi` + a `traciumd` binary) are
+> planned via GitHub Releases. For now, build from source.
+
+**Prerequisites:** Rust (stable), Node 18+ with pnpm. On Linux the desktop app
+also needs the WebKitGTK libraries — see [`docs/development.md`](docs/development.md).
+
+**Desktop app** (tray GUI):
+
+```bash
+pnpm install
+pnpm tauri dev          # run from source
+pnpm tauri build        # produce an installable bundle
+```
+
+**Headless daemon** (`traciumd`) — background monitoring with no GUI, a few MB
+of RAM, effectively no idle CPU. Ideal for servers or always-on collection:
+
+```bash
+cargo build --release -p tracium-cli
+./target/release/traciumd run        # collect continuously
+./target/release/traciumd status     # current reachability + gateway
+./target/release/traciumd report     # 24h reliability + QoE
+./target/release/traciumd export connectivity > data.csv
+```
+
+Run it on boot as an unprivileged **systemd user service**:
+
+```bash
+install -Dm755 target/release/traciumd ~/.local/bin/traciumd
+install -Dm644 packaging/systemd/tracium.service ~/.config/systemd/user/tracium.service
+systemctl --user daemon-reload
+systemctl --user enable --now tracium.service
+loginctl enable-linger "$USER"       # keep running across reboots/logout
+```
+
+The daemon and the desktop app share one local database
+(`com.tracium.app/tracium.db`). Run **one writer at a time** (daemon *or* GUI).
+
+---
+
 ## Coming Soon
 
 Tracium is currently in active development. Some advanced features may be offered under a sustainable licensing model, but the core monitoring experience will always be free and open source.
