@@ -353,6 +353,38 @@ impl Store {
         Ok(())
     }
 
+    /// Record a gateway ping result (uses the interface_samples gateway
+    /// columns; kept out of connectivity_samples so it never skews internet
+    /// reliability/rollups). `iface='gateway'` marks the row.
+    pub async fn insert_gateway_sample(
+        &self,
+        ts: i64,
+        rtt_ms: Option<f64>,
+        loss_pct: f64,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO interface_samples (ts, iface, gateway_rtt_ms, lan_loss_pct) \
+             VALUES (?, 'gateway', ?, ?)",
+        )
+        .bind(ts)
+        .bind(rtt_ms)
+        .bind(loss_pct)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// The latest gateway (LAN) sample, if any.
+    pub async fn latest_gateway(&self) -> Result<Option<GatewaySample>> {
+        let row = sqlx::query_as::<_, GatewaySample>(
+            "SELECT ts, gateway_rtt_ms, lan_loss_pct FROM interface_samples \
+             WHERE iface = 'gateway' ORDER BY ts DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     /// The latest aggregate bandwidth rate, if any.
     pub async fn latest_bandwidth(&self) -> Result<Option<BandwidthNow>> {
         let row = sqlx::query_as::<_, BandwidthNow>(
@@ -1072,6 +1104,14 @@ pub struct SecuritySnapshot {
     pub open_ports: Option<String>,
 }
 
+/// Latest gateway (LAN) ping sample.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct GatewaySample {
+    pub ts: i64,
+    pub gateway_rtt_ms: Option<f64>,
+    pub lan_loss_pct: Option<f64>,
+}
+
 /// Latest aggregate bandwidth rate (bits/sec).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct BandwidthNow {
@@ -1292,6 +1332,20 @@ mod tests {
         store.seed_default_targets(0).await.unwrap();
         let targets = store.list_targets().await.unwrap();
         assert_eq!(targets.len(), 3, "seeding twice should not duplicate");
+    }
+
+    #[tokio::test]
+    async fn gateway_sample_roundtrip() {
+        let store = Store::open_in_memory().await.unwrap();
+        assert!(store.latest_gateway().await.unwrap().is_none());
+        store.insert_gateway_sample(100, Some(0.8), 0.0).await.unwrap();
+        store.insert_gateway_sample(200, None, 100.0).await.unwrap();
+        let g = store.latest_gateway().await.unwrap().unwrap();
+        assert_eq!(g.ts, 200);
+        assert_eq!(g.gateway_rtt_ms, None);
+        assert_eq!(g.lan_loss_pct, Some(100.0));
+        // gateway rows must NOT count toward bandwidth totals (rx/tx null).
+        assert_eq!(store.bandwidth_totals(0).await.unwrap().rx_bytes, 0);
     }
 
     #[tokio::test]

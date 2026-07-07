@@ -13,8 +13,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tracium_probe::security::{check_doh, check_dot, detect_vpn, firewall_active, scan_local_ports, COMMON_PORTS};
 use tracium_probe::{
-    discover_devices, dns_lookup, get_wifi, probe, public_ip, traceroute, BandwidthSampler,
-    ProbeConfig,
+    default_gateway_ip, discover_devices, dns_lookup, get_wifi, ping, probe, public_ip, traceroute,
+    BandwidthSampler, ProbeConfig,
 };
 use tracium_store::{
     NewConnectivitySample, SecuritySnapshot, Store, StoreError, TracerouteHop, WifiSample,
@@ -265,6 +265,15 @@ impl Monitor {
         Ok(())
     }
 
+    /// Ping the default gateway (ICMP via the OS `ping`) for LAN latency + loss.
+    pub async fn sample_gateway(&self, now: i64) -> Result<(), StoreError> {
+        let Some(ip) = default_gateway_ip() else { return Ok(()) };
+        if let Some(p) = ping(&ip, 3, Duration::from_secs(3)).await {
+            self.store.insert_gateway_sample(now, p.rtt_avg, p.loss_pct).await?;
+        }
+        Ok(())
+    }
+
     /// Enumerate LAN devices from the ARP cache and upsert them.
     pub async fn sample_devices(&self, now: i64) -> Result<(), StoreError> {
         for entry in discover_devices().await {
@@ -419,6 +428,10 @@ impl Monitor {
             // Bandwidth every cycle (cheap; rate is over the tick interval).
             if let Err(e) = self.record_bandwidth(now, bandwidth.sample()).await {
                 eprintln!("tracium bandwidth sample failed: {e}");
+            }
+            // Gateway/LAN ping every cycle (local, fast).
+            if let Err(e) = self.sample_gateway(now).await {
+                eprintln!("tracium gateway sample failed: {e}");
             }
             if now - last_dns >= dns_ms {
                 if let Err(e) = self.sample_dns(now).await {

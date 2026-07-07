@@ -10,8 +10,8 @@ use std::sync::Mutex;
 use tracium_monitor::{now_ms, Monitor, MonitorConfig, StatusUpdate};
 use tracium_store::{
     BandwidthNow, BandwidthTotals, ConnectivitySample, Device, DnsResolverStat, Event, NewTarget,
-    Outage, QoeAverage, Reliability, Rollup, SecuritySnapshot, SpeedtestRow, Store, Target,
-    TargetStatus, TracerouteView, WifiSample,
+    GatewaySample, Outage, QoeAverage, Reliability, Rollup, SecuritySnapshot, SpeedtestRow, Store,
+    Target, TargetStatus, TracerouteView, WifiSample,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -186,6 +186,12 @@ async fn wifi(state: State<'_, AppState>) -> Result<Option<WifiSample>, String> 
     state.store.latest_wifi().await.map_err(|e| e.to_string())
 }
 
+/// Latest gateway (LAN) latency + loss, if measured.
+#[tauri::command]
+async fn gateway_status(state: State<'_, AppState>) -> Result<Option<GatewaySample>, String> {
+    state.store.latest_gateway().await.map_err(|e| e.to_string())
+}
+
 /// Known LAN devices (most-recently-seen first).
 #[tauri::command]
 async fn devices(state: State<'_, AppState>) -> Result<Vec<Device>, String> {
@@ -313,6 +319,7 @@ pub fn run() {
             security_status,
             latest_traceroute,
             devices,
+            gateway_status,
             wifi,
             router_status,
             run_speedtest,

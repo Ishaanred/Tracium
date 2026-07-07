@@ -104,6 +104,12 @@ interface Wifi {
   channel: number | null;
 }
 
+interface Gateway {
+  ts: number;
+  gateway_rtt_ms: number | null;
+  lan_loss_pct: number | null;
+}
+
 interface LanDevice {
   id: number;
   mac: string | null;
@@ -195,6 +201,7 @@ export default function App() {
   const [security, setSecurity] = useState<Security | null>(null);
   const [trace, setTrace] = useState<Traceroute | null>(null);
   const [devices, setDevices] = useState<LanDevice[]>([]);
+  const [gateway, setGateway] = useState<Gateway | null>(null);
   const [wifi, setWifi] = useState<Wifi | null>(null);
   const [targets, setTargets] = useState<Target[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -257,6 +264,7 @@ export default function App() {
     invoke<Security | null>("security_status").then(setSecurity).catch(() => {});
     invoke<Traceroute | null>("latest_traceroute").then(setTrace).catch(() => {});
     invoke<LanDevice[]>("devices").then(setDevices).catch(() => {});
+    invoke<Gateway | null>("gateway_status").then(setGateway).catch(() => {});
     invoke<Wifi | null>("wifi").then(setWifi).catch(() => {});
     invoke<Speedtest[]>("speedtest_history", { limit: 10 })
       .then((h) => {
@@ -581,6 +589,19 @@ export default function App() {
               value={wifi.link_speed_mbps != null ? `${wifi.link_speed_mbps} Mbps` : "—"}
               info="Negotiated link speed with the access point (a ceiling, not your internet speed)."
             />
+          </div>
+        </section>
+      )}
+
+      {gateway && (
+        <section className="card">
+          <CardTitle
+            title="Local network"
+            info="Latency and packet loss to your router (the gateway), measured with ICMP ping. High gateway latency or LAN loss points to a local problem (Wi-Fi, cabling, router) rather than your ISP."
+          />
+          <div className="grid">
+            <Stat label="Gateway latency" value={fmtMs(gateway.gateway_rtt_ms)} />
+            <Stat label="LAN packet loss" value={fmtPct(gateway.lan_loss_pct)} />
           </div>
         </section>
       )}
