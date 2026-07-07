@@ -59,6 +59,12 @@ interface Security {
   open_ports: string | null;
 }
 
+interface RouterInfo {
+  descr: string | null;
+  name: string | null;
+  uptime_secs: number | null;
+}
+
 interface Wifi {
   ssid: string | null;
   bssid: string | null;
@@ -140,6 +146,20 @@ export default function App() {
   const [targets, setTargets] = useState<Target[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [routerAddr, setRouterAddr] = useState("");
+  const [routerCommunity, setRouterCommunity] = useState("public");
+  const [router, setRouter] = useState<RouterInfo | null>(null);
+  const [routerMsg, setRouterMsg] = useState<string | null>(null);
+
+  const queryRouter = () => {
+    setRouterMsg("Querying…");
+    invoke<RouterInfo | null>("router_status", { addr: routerAddr, community: routerCommunity })
+      .then((r) => {
+        setRouter(r);
+        setRouterMsg(r ? null : "No response (SNMP disabled or wrong community?)");
+      })
+      .catch((e) => setRouterMsg(String(e)));
+  };
 
   // Refresh derived summaries (called on mount + after each status tick).
   const refreshDerived = () => {
@@ -381,6 +401,52 @@ export default function App() {
             ))}
           </ul>
         )}
+      </section>
+
+      <section className="card">
+        <h2>Router (SNMP)</h2>
+        <div className="row">
+          <input
+            className="input"
+            placeholder="Router IP (e.g. 192.168.1.1)"
+            value={routerAddr}
+            onChange={(e) => setRouterAddr(e.target.value)}
+          />
+          <input
+            className="input input--sm"
+            placeholder="community"
+            value={routerCommunity}
+            onChange={(e) => setRouterCommunity(e.target.value)}
+          />
+          <button className="btn" onClick={queryRouter} disabled={!routerAddr}>
+            Query
+          </button>
+        </div>
+        {router && (
+          <ul className="targets" style={{ marginTop: 12 }}>
+            {router.name && (
+              <li>
+                <strong>Name</strong>
+                <span className="targets__host">{router.name}</span>
+              </li>
+            )}
+            {router.descr && (
+              <li>
+                <strong>Description</strong>
+                <span className="targets__host">{router.descr}</span>
+              </li>
+            )}
+            {router.uptime_secs != null && (
+              <li>
+                <strong>Uptime</strong>
+                <span className="targets__host">
+                  {Math.floor(router.uptime_secs / 3600)} h
+                </span>
+              </li>
+            )}
+          </ul>
+        )}
+        {routerMsg && <p className="status">{routerMsg}</p>}
       </section>
 
       <section className="card">

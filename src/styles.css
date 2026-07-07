@@ -241,6 +241,18 @@ body {
   cursor: pointer;
 }
 .btn:hover { filter: brightness(1.1); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.input {
+  flex: 1;
+  min-width: 140px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 14px;
+}
+.input--sm { flex: 0 0 120px; }
 
 .targets {
   list-style: none;

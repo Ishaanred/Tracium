@@ -101,6 +101,24 @@ async fn bandwidth_totals(
     state.store.bandwidth_totals(since).await.map_err(|e| e.to_string())
 }
 
+/// On-demand SNMP query of a router. `addr` is an IP (":161" appended if no
+/// port); `community` is the SNMP v2c community string. Returns `None` if the
+/// router is unreachable or SNMP is disabled.
+#[tauri::command]
+async fn router_status(
+    addr: String,
+    community: String,
+) -> Result<Option<netpulse_probe::RouterInfo>, String> {
+    use std::net::ToSocketAddrs;
+    let with_port = if addr.contains(':') { addr } else { format!("{addr}:161") };
+    let sock = with_port
+        .to_socket_addrs()
+        .map_err(|e| e.to_string())?
+        .next()
+        .ok_or("could not resolve router address")?;
+    Ok(netpulse_probe::query_router(sock, &community, std::time::Duration::from_secs(3)).await)
+}
+
 /// The latest Wi-Fi link sample, if connected.
 #[tauri::command]
 async fn wifi(state: State<'_, AppState>) -> Result<Option<WifiSample>, String> {
@@ -233,6 +251,7 @@ pub fn run() {
             latest_traceroute,
             devices,
             wifi,
+            router_status,
             recent_events,
             recent_outages,
             export_csv
