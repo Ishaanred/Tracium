@@ -188,6 +188,23 @@ Tracium takes cues from tools that feel invisible until you need them — clean,
 - **Honest** — Raw numbers when you want them. Simple scores when you don't.
 - **Cross-Platform** — Windows and Linux. Same experience. Same codebase.
 
+### Footprint (measured)
+
+Not just a claim — measured with [`scripts/bench.sh`](scripts/bench.sh) on a
+**release build**, idle, with the window open (RAM shown as PSS, which accounts
+for shared libraries):
+
+| Platform | CPU (idle) | RAM | Notes |
+|---|---|---|---|
+| **Linux** (WebKitGTK) | **~0.15%** of one core | **~158 MB** | Ubuntu 26.04, release build |
+| **Windows** (WebView2) | *TBD* | *TBD* | `scripts/bench.ps1`, pending Windows testing |
+
+The **monitoring engine itself is negligible** — it wakes every 15 s to run a
+handful of TCP probes and a SQLite write, then sleeps (hence ~0.15% CPU). Almost
+all the RAM is the GUI's webview. A planned **headless CLI/daemon** (no webview)
+will run in single-digit MB with effectively no measurable CPU — for truly
+invisible background monitoring.
+
 ---
 
 ## How It's Built
