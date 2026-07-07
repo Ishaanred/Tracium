@@ -1,0 +1,17 @@
+[package]
+name = "tracium-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tracium headless daemon + CLI — background monitoring with no GUI."
+
+[[bin]]
+name = "traciumd"
+path = "src/main.rs"
+
+[dependencies]
+tracium-store = { path = "../store" }
+tracium-monitor = { path = "../monitor" }
+tokio = { workspace = true }
+dirs = "5"

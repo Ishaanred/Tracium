@@ -68,6 +68,26 @@ Runtime resolution order (`resolve_speedtest_bin`): `$TRACIUM_LIBRESPEED_CLI`
 So a dev without the sidecar still works if `librespeed-cli` is on PATH.
 CI must run `fetch-sidecars.sh` before `pnpm tauri build`.
 
+## Headless daemon (`traciumd`)
+
+`crates/cli` builds `traciumd` — the full monitor with **no GUI/webview**, for
+background/service use. It shares the same SQLite DB as the desktop app
+(platform data dir + `com.tracium.app`; override with `--db <path>`).
+
+```bash
+cargo build --release -p tracium-cli
+./target/release/traciumd run       # collect forever (the daemon)
+./target/release/traciumd status    # current reachability + gateway
+./target/release/traciumd report    # 24h reliability + recent QoE
+./target/release/traciumd export events > events.csv
+```
+
+Run it as a systemd **user** service (unprivileged) — see
+[`packaging/systemd/tracium.service`](../packaging/systemd/tracium.service).
+
+> Run the daemon **or** the GUI, not both writing at once (they'd double-count
+> samples). A future flag will let the GUI attach read-only to a running daemon.
+
 ## Common commands
 
 ```bash
