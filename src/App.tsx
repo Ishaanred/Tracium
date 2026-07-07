@@ -51,6 +51,14 @@ interface BandwidthTotals {
   tx_bytes: number;
 }
 
+interface Security {
+  firewall_active: boolean | null;
+  vpn_detected: boolean | null;
+  doh_active: boolean | null;
+  dot_active: boolean | null;
+  open_ports: string | null;
+}
+
 interface Reliability {
   samples: number;
   up_samples: number;
@@ -98,6 +106,7 @@ export default function App() {
   const [publicIp, setPublicIp] = useState<string | null>(null);
   const [bw, setBw] = useState<BandwidthNow | null>(null);
   const [bwTotal, setBwTotal] = useState<BandwidthTotals | null>(null);
+  const [security, setSecurity] = useState<Security | null>(null);
   const [targets, setTargets] = useState<Target[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
@@ -119,6 +128,7 @@ export default function App() {
     invoke<BandwidthTotals>("bandwidth_totals", { windowSecs: DAY_SECS })
       .then(setBwTotal)
       .catch(() => {});
+    invoke<Security | null>("security_status").then(setSecurity).catch(() => {});
   };
 
   const doExport = (kind: "connectivity" | "events") => {
@@ -218,6 +228,29 @@ export default function App() {
       </section>
 
       <section className="card">
+        <h2>Security</h2>
+        {security ? (
+          <div className="grid">
+            <Flag label="Firewall" value={security.firewall_active} goodWhenTrue />
+            <Flag label="DNS-over-HTTPS" value={security.doh_active} goodWhenTrue />
+            <Flag label="DNS-over-TLS" value={security.dot_active} goodWhenTrue />
+            <Flag label="VPN" value={security.vpn_detected} goodWhenTrue={false} neutral />
+            <Stat
+              label="Open ports"
+              value={
+                security.open_ports
+                  ? (JSON.parse(security.open_ports) as number[]).join(", ") || "none"
+                  : "—"
+              }
+              hint="locally listening"
+            />
+          </div>
+        ) : (
+          <p className="status">Scanning…</p>
+        )}
+      </section>
+
+      <section className="card">
         <h2>Bandwidth</h2>
         <div className="grid">
           <Stat label="Download" value={fmtRate(bw?.rx_bps)} hint="live" />
@@ -311,6 +344,34 @@ function Score({ label, value }: { label: string; value: number }) {
       <span className="stat__label">{label}</span>
       <span className="stat__value" style={{ color: scoreColor(value) }}>
         {value.toFixed(0)}
+      </span>
+    </div>
+  );
+}
+
+function Flag({
+  label,
+  value,
+  goodWhenTrue,
+  neutral,
+}: {
+  label: string;
+  value: boolean | null;
+  goodWhenTrue: boolean;
+  neutral?: boolean;
+}) {
+  let color = "var(--muted)";
+  let text = "Unknown";
+  if (value != null) {
+    text = value ? "Yes" : "No";
+    if (neutral) color = "var(--text)";
+    else color = value === goodWhenTrue ? "var(--ok)" : "var(--bad)";
+  }
+  return (
+    <div className="stat">
+      <span className="stat__label">{label}</span>
+      <span className="stat__value" style={{ color, fontSize: 20 }}>
+        {text}
       </span>
     </div>
   );

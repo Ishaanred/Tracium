@@ -11,8 +11,9 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use netpulse_probe::security::{check_doh, check_dot, detect_vpn, firewall_active, scan_local_ports, COMMON_PORTS};
 use netpulse_probe::{dns_lookup, probe, public_ip, BandwidthSampler, ProbeConfig};
-use netpulse_store::{NewConnectivitySample, Store, StoreError};
+use netpulse_store::{NewConnectivitySample, SecuritySnapshot, Store, StoreError};
 
 /// Resolvers compared on the DNS cadence (label, IP).
 const DNS_RESOLVERS: &[(&str, &str)] =
@@ -42,6 +43,10 @@ pub struct MonitorConfig {
     pub public_ip_interval: Duration,
     /// Public-IP HTTP timeout.
     pub public_ip_timeout: Duration,
+    /// How often to run the security-posture snapshot.
+    pub security_interval: Duration,
+    /// Timeout for individual security probes (DoH/DoT).
+    pub security_timeout: Duration,
 }
 
 impl Default for MonitorConfig {
@@ -55,6 +60,8 @@ impl Default for MonitorConfig {
             dns_timeout: Duration::from_secs(3),
             public_ip_interval: Duration::from_secs(600),
             public_ip_timeout: Duration::from_secs(5),
+            security_interval: Duration::from_secs(300),
+            security_timeout: Duration::from_secs(4),
         }
     }
 }
@@ -203,6 +210,32 @@ impl Monitor {
         Ok(())
     }
 
+    /// Gather a security-posture snapshot (VPN heuristic, DoH/DoT reachability,
+    /// firewall status, locally-listening ports) and persist it. Blocking
+    /// probes run off the async runtime.
+    pub async fn sample_security(&self, now: i64) -> Result<(), StoreError> {
+        let to = self.config.security_timeout;
+        let doh = tokio::task::spawn_blocking(move || check_doh(to)).await.unwrap_or(false);
+        let dot = tokio::task::spawn_blocking(move || check_dot(to)).await.unwrap_or(false);
+        let firewall = tokio::task::spawn_blocking(firewall_active).await.unwrap_or(None);
+        let vpn = tokio::task::spawn_blocking(detect_vpn).await.ok();
+        let open = scan_local_ports(COMMON_PORTS, Duration::from_millis(200)).await;
+
+        let snapshot = SecuritySnapshot {
+            ts: now,
+            public_ip: self.store.latest_public_ip().await?,
+            nat_type: None,       // STUN classification: future
+            upnp_enabled: None,   // IGD discovery: future
+            firewall_active: firewall,
+            vpn_detected: vpn.map(|v| v.active),
+            doh_active: Some(doh),
+            dot_active: Some(dot),
+            open_ports: serde_json::to_string(&open).ok(),
+        };
+        self.store.insert_security_snapshot(&snapshot).await?;
+        Ok(())
+    }
+
     /// Check the public IP (blocking HTTP off the async runtime), persist a
     /// snapshot, and log a `public_ip_change` event when it differs from the
     /// last known value.
@@ -252,12 +285,14 @@ impl Monitor {
         let mut last_maint = now_ms();
         let mut last_dns = 0i64; // 0 => sample on the first cycle
         let mut last_pubip = 0i64;
+        let mut last_security = 0i64;
         let mut bandwidth = BandwidthSampler::new();
 
         let mut ticker = tokio::time::interval(self.config.interval);
         let maint_ms = self.config.maintenance_interval.as_millis() as i64;
         let dns_ms = self.config.dns_interval.as_millis() as i64;
         let pubip_ms = self.config.public_ip_interval.as_millis() as i64;
+        let security_ms = self.config.security_interval.as_millis() as i64;
         loop {
             ticker.tick().await;
             let now = now_ms();
@@ -289,6 +324,12 @@ impl Monitor {
                     eprintln!("netpulse public-ip sample failed: {e}");
                 }
                 last_pubip = now;
+            }
+            if now - last_security >= security_ms {
+                if let Err(e) = self.sample_security(now).await {
+                    eprintln!("netpulse security sample failed: {e}");
+                }
+                last_security = now;
             }
             if now - last_maint >= maint_ms {
                 if let Err(e) = self.store.maintain(now).await {
@@ -326,6 +367,8 @@ mod tests {
             dns_timeout: Duration::from_millis(300),
             public_ip_interval: Duration::from_secs(600),
             public_ip_timeout: Duration::from_millis(300),
+            security_interval: Duration::from_secs(300),
+            security_timeout: Duration::from_millis(300),
         }
     }
 

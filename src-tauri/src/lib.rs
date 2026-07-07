@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use netpulse_monitor::{now_ms, Monitor, MonitorConfig, StatusUpdate};
 use netpulse_store::{
     BandwidthNow, BandwidthTotals, ConnectivitySample, DnsResolverStat, Event, NewTarget, Outage,
-    Reliability, Rollup, Store, Target,
+    Reliability, Rollup, SecuritySnapshot, Store, Target,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -99,6 +99,12 @@ async fn bandwidth_totals(
 ) -> Result<BandwidthTotals, String> {
     let since = now_ms() - window_secs * 1000;
     state.store.bandwidth_totals(since).await.map_err(|e| e.to_string())
+}
+
+/// The latest security-posture snapshot, if one has been taken.
+#[tauri::command]
+async fn security_status(state: State<'_, AppState>) -> Result<Option<SecuritySnapshot>, String> {
+    state.store.latest_security().await.map_err(|e| e.to_string())
 }
 
 /// The most recently observed public IP, if known.
@@ -205,6 +211,7 @@ pub fn run() {
             public_ip,
             bandwidth_now,
             bandwidth_totals,
+            security_status,
             recent_events,
             recent_outages,
             export_csv

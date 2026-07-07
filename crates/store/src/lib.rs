@@ -364,6 +364,42 @@ impl Store {
         Ok(BandwidthTotals { rx_bytes: rx, tx_bytes: tx })
     }
 
+    /// Record a full security-posture snapshot.
+    pub async fn insert_security_snapshot(&self, s: &SecuritySnapshot) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO security_snapshots \
+             (ts, public_ip, nat_type, upnp_enabled, firewall_active, vpn_detected, \
+              doh_active, dot_active, open_ports) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(s.ts)
+        .bind(&s.public_ip)
+        .bind(&s.nat_type)
+        .bind(s.upnp_enabled.map(|b| b as i64))
+        .bind(s.firewall_active.map(|b| b as i64))
+        .bind(s.vpn_detected.map(|b| b as i64))
+        .bind(s.doh_active.map(|b| b as i64))
+        .bind(s.dot_active.map(|b| b as i64))
+        .bind(&s.open_ports)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// The latest full security snapshot (one written with posture fields set,
+    /// identified by a non-null `vpn_detected`).
+    pub async fn latest_security(&self) -> Result<Option<SecuritySnapshot>> {
+        let row = sqlx::query_as::<_, SecuritySnapshot>(
+            "SELECT ts, public_ip, nat_type, upnp_enabled, firewall_active, vpn_detected, \
+                    doh_active, dot_active, open_ports \
+             FROM security_snapshots WHERE vpn_detected IS NOT NULL \
+             ORDER BY ts DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     /// Record a security snapshot carrying the public IP.
     pub async fn insert_public_ip(&self, ts: i64, ip: Option<&str>) -> Result<()> {
         sqlx::query("INSERT INTO security_snapshots (ts, public_ip) VALUES (?, ?)")
@@ -715,6 +751,22 @@ pub struct ConnectivitySample {
     pub up: bool,
 }
 
+/// A security-posture snapshot. Fields are `None` when a probe couldn't
+/// determine a value (or isn't implemented yet, e.g. NAT/UPnP).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct SecuritySnapshot {
+    pub ts: i64,
+    pub public_ip: Option<String>,
+    pub nat_type: Option<String>,
+    pub upnp_enabled: Option<bool>,
+    pub firewall_active: Option<bool>,
+    pub vpn_detected: Option<bool>,
+    pub doh_active: Option<bool>,
+    pub dot_active: Option<bool>,
+    /// JSON array of locally-listening ports.
+    pub open_ports: Option<String>,
+}
+
 /// Latest aggregate bandwidth rate (bits/sec).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct BandwidthNow {
@@ -939,6 +991,33 @@ mod tests {
         let totals = store.bandwidth_totals(0).await.unwrap();
         assert_eq!(totals.rx_bytes, 4_000);
         assert_eq!(totals.tx_bytes, 600);
+    }
+
+    #[tokio::test]
+    async fn security_snapshot_roundtrip() {
+        let store = Store::open_in_memory().await.unwrap();
+        assert!(store.latest_security().await.unwrap().is_none());
+
+        store
+            .insert_security_snapshot(&SecuritySnapshot {
+                ts: 100,
+                firewall_active: Some(true),
+                vpn_detected: Some(false),
+                doh_active: Some(true),
+                dot_active: Some(true),
+                open_ports: Some("[22,443]".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let s = store.latest_security().await.unwrap().unwrap();
+        assert_eq!(s.ts, 100);
+        assert_eq!(s.firewall_active, Some(true));
+        assert_eq!(s.vpn_detected, Some(false));
+        assert_eq!(s.doh_active, Some(true));
+        assert_eq!(s.open_ports.as_deref(), Some("[22,443]"));
+        assert!(s.nat_type.is_none());
     }
 
     #[tokio::test]

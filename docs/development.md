@@ -75,7 +75,9 @@ is a stable signal for latency/jitter/loss.
   - connectivity (TCP-connect RTT/jitter/loss),
   - `dns` (time a lookup against a specific resolver, `hickory-resolver`),
   - `netinfo` (public IP via HTTP, `ureq`),
-  - `bandwidth` (interface byte-rate + per-iface deltas, `sysinfo`).
+  - `bandwidth` (interface byte-rate + per-iface deltas, `sysinfo`),
+  - `security` (VPN heuristic via `netdev`; DoH via HTTPS + DoT via a 853
+    connect probe; firewall status via native CLIs; local open-port scan).
   Unit-tested with local sockets; real-internet checks behind `--ignored`.
 - `netpulse-monitor` — samples every enabled internet target on an interval,
   writes `connectivity_samples`, and opens/closes `outages` (internet is "down"
