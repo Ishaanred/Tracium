@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="NetPulse">
+  <rect width="1024" height="1024" rx="200" fill="#0b1120"/>
+  <polyline
+    points="120,512 330,512 400,362 470,722 540,192 610,632 680,512 904,512"
+    fill="none" stroke="#0891b2" stroke-width="44"
+    stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="120" cy="512" r="26" fill="#0891b2"/>
+  <circle cx="904" cy="512" r="26" fill="#0891b2"/>
+</svg>

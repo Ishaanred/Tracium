@@ -1,0 +1,22 @@
+# Rust
+/target
+**/target
+
+# Node
+node_modules
+dist
+.pnpm-store
+
+# Tauri generated
+src-tauri/gen
+
+# Local db / env
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+
+# OS / editor
+.DS_Store
+*.log

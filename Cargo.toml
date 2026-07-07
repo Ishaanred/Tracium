@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["crates/store", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Ishaanred/NetPulse"
+
+[workspace.dependencies]
+sqlx = { version = "0.8", default-features = false, features = [
+    "sqlite",
+    "runtime-tokio",
+    "migrate",
+    "macros",
+] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
