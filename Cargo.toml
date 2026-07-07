@@ -6,7 +6,7 @@ members = ["crates/store", "crates/probe", "crates/monitor", "src-tauri"]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/Ishaanred/NetPulse"
+repository = "https://github.com/Ishaanred/Tracium"
 
 [workspace.dependencies]
 sqlx = { version = "0.8", default-features = false, features = [

@@ -1,14 +1,14 @@
 [package]
-name = "netpulse-monitor"
+name = "tracium-monitor"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "NetPulse monitoring orchestration: sampler loop + outage detection."
+description = "Tracium monitoring orchestration: sampler loop + outage detection."
 
 [dependencies]
-netpulse-store = { path = "../store" }
-netpulse-probe = { path = "../probe" }
+tracium-store = { path = "../store" }
+tracium-probe = { path = "../probe" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

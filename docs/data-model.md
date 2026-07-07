@@ -1,4 +1,4 @@
-# NetPulse — Data Model
+# Tracium — Data Model
 
 This document explains the storage design. The authoritative schema is
 [`db/schema.sql`](../db/schema.sql); this file explains *why* it looks the way it does.
@@ -16,7 +16,7 @@ and keeps "all data on your machine." Those three promises drive every decision 
 
 ## Engine: SQLite
 
-- Embedded, single file (`netpulse.db`), zero configuration, ships inside the app.
+- Embedded, single file (`tracium.db`), zero configuration, ships inside the app.
 - **WAL mode** — the background sampler holds one *writer* connection while the UI
   reads concurrently without blocking. This is the key to a responsive tray window
   during active probing.

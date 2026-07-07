@@ -1,4 +1,4 @@
-# NetPulse — OSS Integration Plan (Complex Tier)
+# Tracium — OSS Integration Plan (Complex Tier)
 
 Per the README's "integrate, don't reinvent" principle, the complex features
 lean on existing open-source projects. This maps each to candidate OSS.
@@ -6,7 +6,7 @@ lean on existing open-source projects. This maps each to candidate OSS.
 **Licensing rule of thumb:** prefer **MIT / Apache-2.0** Rust library crates (we
 can depend on them directly). **GPL** tools are acceptable **only when invoked as
 a separate process** (a bundled/optional CLI), never linked/vendored into our
-binary. Anything we must ship should keep NetPulse permissively licensable.
+binary. Anything we must ship should keep Tracium permissively licensable.
 
 Status legend: **✓ verified** (checked on crates.io/GitHub, Jul 2026) ·
 **⚠ unverified** (from prior knowledge — confirm before adding).
@@ -57,7 +57,7 @@ crate for the entire routing domain — do this first among the unverified areas
 
 **Pick:** platform-native (`neli`/nl80211 on Linux, `windows` crate on Windows)
 for the real metric set; `wifiscanner` only if we want a trivial SSID/RSSI stub
-first. This is two native implementations behind one NetPulse trait.
+first. This is two native implementations behind one Tracium trait.
 
 ## Speed test + bufferbloat — ✓ verified (needs a backend decision)
 
@@ -80,7 +80,7 @@ Because it needs infra, this is *not* a quick add — schedule accordingly.
 ## Step 7 — Per-app / per-device bandwidth — DEFERRED BY DECISION
 
 > **Status:** intentionally postponed (decision, 2026-07-07). It is the one
-> feature that cannot be done within NetPulse's unprivileged design. Everything
+> feature that cannot be done within Tracium's unprivileged design. Everything
 > else we shipped is privilege-free (TCP-connect not ICMP, ARP *cache* not
 > *scan*, wrapping the OS traceroute). Step 7 breaks that, so it waits until
 > there's a clear need and a decision to accept elevation.

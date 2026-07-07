@@ -5,7 +5,7 @@
 //! packets and read the ICMP "time exceeded" replies, which needs root /
 //! `CAP_NET_RAW` on Linux — the same privilege wall that made us pick
 //! TCP-connect over ICMP for pinging. The OS tools already hold that privilege
-//! (setuid / built-in), so wrapping them keeps NetPulse unprivileged. The
+//! (setuid / built-in), so wrapping them keeps Tracium unprivileged. The
 //! parsing is the interesting part and is fully unit-tested below.
 
 use std::collections::hash_map::DefaultHasher;

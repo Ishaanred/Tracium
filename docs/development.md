@@ -1,4 +1,4 @@
-# NetPulse — Development
+# Tracium — Development
 
 ## Stack
 
@@ -6,14 +6,14 @@
 |---|---|
 | Desktop shell | [Tauri 2](https://tauri.app) (Rust) |
 | Frontend | React 19 + Vite 6 + TypeScript |
-| Storage | SQLite via `sqlx` (WAL), in the `netpulse-store` crate |
+| Storage | SQLite via `sqlx` (WAL), in the `tracium-store` crate |
 
 ## Repository layout
 
 ```
-Netpulse/
+Tracium/
 ├─ Cargo.toml            # Rust workspace root
-├─ crates/store/         # netpulse-store: schema, migrations, typed DB access
+├─ crates/store/         # tracium-store: schema, migrations, typed DB access
 │  ├─ migrations/        # sqlx migrations (0001_init.sql = current schema)
 │  └─ src/lib.rs
 ├─ src-tauri/            # Tauri app crate (window, tray, commands)
@@ -30,7 +30,7 @@ The storage layer is a **standalone crate with no Tauri dependency**, so it
 compiles and tests without any GUI toolchain:
 
 ```bash
-cargo test -p netpulse-store
+cargo test -p tracium-store
 ```
 
 ## Prerequisites
@@ -51,7 +51,7 @@ cargo test -p netpulse-store
   ```
 
   Without these, `cargo build`/`pnpm tauri dev` fail at the `webkit2gtk` build
-  step. The `netpulse-store` tests above do **not** need them.
+  step. The `tracium-store` tests above do **not** need them.
 
 ## Bundled tools (sidecars)
 
@@ -63,7 +63,7 @@ are **not committed**; fetch them for your platform before dev/build:
 ./scripts/fetch-sidecars.sh    # downloads into src-tauri/binaries/ (gitignored)
 ```
 
-Runtime resolution order (`resolve_speedtest_bin`): `$NETPULSE_LIBRESPEED_CLI`
+Runtime resolution order (`resolve_speedtest_bin`): `$TRACIUM_LIBRESPEED_CLI`
 → a `librespeed-cli` next to the app executable (the bundled sidecar) → PATH.
 So a dev without the sidecar still works if `librespeed-cli` is on PATH.
 CI must run `fetch-sidecars.sh` before `pnpm tauri build`.
@@ -75,18 +75,18 @@ pnpm install            # install frontend deps
 pnpm build              # typecheck + build the frontend (no webkit needed)
 pnpm tauri dev          # run the full desktop app (needs webkit libs)
 pnpm tauri build        # produce a release bundle
-cargo test -p netpulse-store   # storage layer tests
+cargo test -p tracium-store   # storage layer tests
 ```
 
 ## How connectivity probing works
 
-NetPulse measures reachability with **unprivileged TCP-connect timing**, not
+Tracium measures reachability with **unprivileged TCP-connect timing**, not
 ICMP echo. ICMP needs raw sockets (root / `CAP_NET_RAW`) on Linux, which breaks
 the zero-setup promise. Timing the TCP handshake to a known-open port (443 on
 1.1.1.1 / 8.8.8.8) needs no privileges, is identical on Windows and Linux, and
 is a stable signal for latency/jitter/loss.
 
-- `netpulse-probe` — measurement, no DB/GUI deps. Modules:
+- `tracium-probe` — measurement, no DB/GUI deps. Modules:
   - connectivity (TCP-connect RTT/jitter/loss),
   - `dns` (time a lookup against a specific resolver, `hickory-resolver`),
   - `netinfo` (public IP via HTTP, `ureq`),
@@ -102,7 +102,7 @@ is a stable signal for latency/jitter/loss.
     bufferbloat deferred, needs load generation).
   Unit-tested with local sockets / sample output; real-internet checks behind
   `--ignored`.
-- `netpulse-monitor` — samples every enabled internet target on an interval,
+- `tracium-monitor` — samples every enabled internet target on an interval,
   writes `connectivity_samples`, and opens/closes `outages` (internet is "down"
   only when *every* target fails a cycle). Emits a `status` event to the UI.
   Also runs **maintenance** hourly: rolls up latency/loss/jitter into
@@ -114,7 +114,7 @@ is a stable signal for latency/jitter/loss.
 ## Database
 
 - Created on first launch at the platform app-data dir
-  (`~/.local/share/com.netpulse.app/netpulse.db` on Linux), migrated
+  (`~/.local/share/com.tracium.app/tracium.db` on Linux), migrated
   automatically on open.
 - To regenerate the migration after editing `db/schema.sql`:
 

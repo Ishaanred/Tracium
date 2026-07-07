@@ -265,7 +265,7 @@ export default function App() {
           aria-hidden
         />
         <div>
-          <h1>NetPulse</h1>
+          <h1>Tracium</h1>
           <p className="app__tagline">
             {publicIp ? `Public IP · ${publicIp}` : "Know your network. Inside and out."}
           </p>

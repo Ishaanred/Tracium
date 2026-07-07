@@ -2423,60 +2423,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "netpulse"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "netpulse-monitor",
- "netpulse-probe",
- "netpulse-store",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "tokio",
-]
-
-[[package]]
-name = "netpulse-monitor"
-version = "0.1.0"
-dependencies = [
- "netpulse-probe",
- "netpulse-store",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "netpulse-probe"
-version = "0.1.0"
-dependencies = [
- "csnmp",
- "hickory-resolver",
- "netdev",
- "serde",
- "serde_json",
- "sysinfo",
- "tokio",
- "ureq",
-]
-
-[[package]]
-name = "netpulse-store"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "sqlx",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4873,6 +4819,60 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
+]
+
+[[package]]
+name = "tracium"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "tokio",
+ "tracium-monitor",
+ "tracium-probe",
+ "tracium-store",
+]
+
+[[package]]
+name = "tracium-monitor"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracium-probe",
+ "tracium-store",
+]
+
+[[package]]
+name = "tracium-probe"
+version = "0.1.0"
+dependencies = [
+ "csnmp",
+ "hickory-resolver",
+ "netdev",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tokio",
+ "ureq",
+]
+
+[[package]]
+name = "tracium-store"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

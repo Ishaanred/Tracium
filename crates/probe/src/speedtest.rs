@@ -1,5 +1,5 @@
 //! Speed test by wrapping `librespeed-cli` (invoked as an external process, so
-//! its LGPL license doesn't affect NetPulse's licensing).
+//! its LGPL license doesn't affect Tracium's licensing).
 //!
 //! Every open-source speed test needs a *server*; librespeed-cli talks to the
 //! LibreSpeed community server list (or a self-hosted one) and prints JSON,

@@ -1,4 +1,4 @@
-//! NetPulse storage layer.
+//! Tracium storage layer.
 //!
 //! Owns the SQLite database: connection setup (WAL + sane PRAGMAs), schema
 //! migrations, and (eventually) typed read/write helpers for each metric
@@ -26,7 +26,7 @@ pub enum StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
-/// A handle to the NetPulse database.
+/// A handle to the Tracium database.
 #[derive(Clone)]
 pub struct Store {
     pool: SqlitePool,
@@ -1120,7 +1120,7 @@ pub struct Reliability {
     pub disconnects: i64,
 }
 
-/// A configured probe target (a host NetPulse pings/queries).
+/// A configured probe target (a host Tracium pings/queries).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct Target {
     pub id: i64,
@@ -1700,7 +1700,7 @@ mod tests {
     #[tokio::test]
     async fn file_db_roundtrips() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("netpulse.db");
+        let path = dir.path().join("tracium.db");
         let store = Store::open(&path).await.unwrap();
         sqlx::query(
             "INSERT INTO targets (label, host, kind, enabled, created_at) \

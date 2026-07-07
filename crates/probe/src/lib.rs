@@ -1,4 +1,4 @@
-//! NetPulse connectivity probing.
+//! Tracium connectivity probing.
 //!
 //! Measures reachability + round-trip latency with **unprivileged TCP-connect
 //! timing** rather than ICMP echo. ICMP requires raw sockets (root or

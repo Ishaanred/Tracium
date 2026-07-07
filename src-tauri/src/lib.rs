@@ -1,14 +1,14 @@
-//! NetPulse Tauri application shell.
+//! Tracium Tauri application shell.
 //!
 //! Owns the desktop window + tray, spawns the connectivity monitor, and exposes
 //! the storage layer + live status to the frontend via Tauri commands and a
-//! `status` event. All persistence lives in `netpulse-store`; all probing in
-//! `netpulse-monitor`/`netpulse-probe`.
+//! `status` event. All persistence lives in `tracium-store`; all probing in
+//! `tracium-monitor`/`tracium-probe`.
 
 use std::sync::Mutex;
 
-use netpulse_monitor::{now_ms, Monitor, MonitorConfig, StatusUpdate};
-use netpulse_store::{
+use tracium_monitor::{now_ms, Monitor, MonitorConfig, StatusUpdate};
+use tracium_store::{
     BandwidthNow, BandwidthTotals, ConnectivitySample, Device, DnsResolverStat, Event, NewTarget,
     Outage, QoeAverage, Reliability, Rollup, SecuritySnapshot, SpeedtestRow, Store, Target,
     TracerouteView, WifiSample,
@@ -111,7 +111,7 @@ async fn bandwidth_totals(
 /// Resolve the librespeed-cli binary: env override, then a bundled sidecar next
 /// to the app executable, else `librespeed-cli` on PATH.
 fn resolve_speedtest_bin() -> String {
-    if let Ok(p) = std::env::var("NETPULSE_LIBRESPEED_CLI") {
+    if let Ok(p) = std::env::var("TRACIUM_LIBRESPEED_CLI") {
         if !p.is_empty() {
             return p;
         }
@@ -132,7 +132,7 @@ fn resolve_speedtest_bin() -> String {
 async fn run_speedtest(state: State<'_, AppState>) -> Result<Option<SpeedtestRow>, String> {
     let bin = resolve_speedtest_bin();
     let result =
-        netpulse_probe::run_speedtest_with(&bin, std::time::Duration::from_secs(90)).await;
+        tracium_probe::run_speedtest_with(&bin, std::time::Duration::from_secs(90)).await;
     let Some(r) = result else { return Ok(None) };
     let row = SpeedtestRow {
         ts: now_ms(),
@@ -163,7 +163,7 @@ async fn speedtest_history(
 async fn router_status(
     addr: String,
     community: String,
-) -> Result<Option<netpulse_probe::RouterInfo>, String> {
+) -> Result<Option<tracium_probe::RouterInfo>, String> {
     use std::net::ToSocketAddrs;
     let with_port = if addr.contains(':') { addr } else { format!("{addr}:161") };
     let sock = with_port
@@ -171,7 +171,7 @@ async fn router_status(
         .map_err(|e| e.to_string())?
         .next()
         .ok_or("could not resolve router address")?;
-    Ok(netpulse_probe::query_router(sock, &community, std::time::Duration::from_secs(3)).await)
+    Ok(tracium_probe::query_router(sock, &community, std::time::Duration::from_secs(3)).await)
 }
 
 /// The latest Wi-Fi link sample, if connected.
@@ -248,7 +248,7 @@ async fn export_csv(
         .download_dir()
         .or_else(|_| app.path().app_data_dir())
         .map_err(|e| e.to_string())?;
-    let path = dir.join(format!("netpulse-{kind}.csv"));
+    let path = dir.join(format!("tracium-{kind}.csv"));
     std::fs::write(&path, csv).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().into_owned())
 }
@@ -261,13 +261,13 @@ pub fn run() {
             // Open (create + migrate) the database in the per-user app data dir.
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
-            let db_path = dir.join("netpulse.db");
+            let db_path = dir.join("tracium.db");
 
             let store = tauri::async_runtime::block_on(async {
                 let store = Store::open(&db_path).await?;
                 store.seed_default_settings(now_ms()).await?;
                 store.seed_default_targets(now_ms()).await?;
-                Ok::<_, netpulse_store::StoreError>(store)
+                Ok::<_, tracium_store::StoreError>(store)
             })
             .map_err(|e| format!("failed to init database at {db_path:?}: {e}"))?;
 
@@ -315,5 +315,5 @@ pub fn run() {
             export_csv
         ])
         .run(tauri::generate_context!())
-        .expect("error while running NetPulse");
+        .expect("error while running Tracium");
 }

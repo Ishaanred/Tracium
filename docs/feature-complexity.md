@@ -1,4 +1,4 @@
-# NetPulse — Feature Complexity Split
+# Tracium — Feature Complexity Split
 
 A build-planning view of every metric/feature in the [README](../README.md),
 split by implementation complexity. Use this to sequence work: knock out the

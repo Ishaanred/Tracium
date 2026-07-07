@@ -1,10 +1,10 @@
 [package]
-name = "netpulse-store"
+name = "tracium-store"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "NetPulse storage layer: SQLite schema, migrations, and typed access."
+description = "Tracium storage layer: SQLite schema, migrations, and typed access."
 
 [dependencies]
 sqlx.workspace = true

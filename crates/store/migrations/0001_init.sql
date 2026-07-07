@@ -1,4 +1,4 @@
--- NetPulse database schema
+-- Tracium database schema
 -- Engine: SQLite 3.37+ (STRICT tables), WAL mode.
 -- Conventions:
 --   * All timestamps are unix epoch MILLISECONDS, UTC, stored as INTEGER.

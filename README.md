@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/icon.svg" alt="NetPulse" width="96" height="96" />
+  <img src="assets/icon.svg" alt="Tracium" width="96" height="96" />
 </p>
 
-<h1 align="center">NetPulse</h1>
+<h1 align="center">Tracium</h1>
 
 <p align="center">
   <strong>Know your network. Inside and out.</strong>
@@ -21,9 +21,9 @@
 
 ---
 
-## Why NetPulse?
+## Why Tracium?
 
-Most network tools feel like they were built for sysadmins in 2003. NetPulse doesn't.
+Most network tools feel like they were built for sysadmins in 2003. Tracium doesn't.
 
 It watches your connection like a fitness tracker watches your heart — quietly, continuously, and with enough intelligence to tell you when something's off *before* your Zoom call drops. No command-line flags to memorize. No dashboards that look like a spreadsheet had a bad day. Just a clean window that shows you exactly what's happening, right now, and what happened while you were sleeping.
 
@@ -80,7 +80,7 @@ Your LAN isn't a black box.
 - **Connected Device Count** — Who's on your network right now.
 - **Per-Device Bandwidth** — Which device is hogging the pipe.
 - **Top Bandwidth Consumers** — Ranked. Ruthlessly.
-- **Router CPU & Memory** — If your router supports it, NetPulse reads it.
+- **Router CPU & Memory** — If your router supports it, Tracium reads it.
 
 ### DNS
 
@@ -99,7 +99,7 @@ See the path your packets actually take.
 - **Traceroute** — Visual, not a wall of text.
 - **Hop Count** — More hops = more places for things to go wrong.
 - **Per-Hop Latency** — Which hop is the bottleneck.
-- **Route Changes** — Did your path suddenly shift? NetPulse notices.
+- **Route Changes** — Did your path suddenly shift? Tracium notices.
 - **Packet Loss by Hop** — Pinpoint where the drops happen.
 - **AS/ISP Path** — Who's carrying your packets, hop by hop.
 
@@ -164,7 +164,7 @@ Everything above, tracked over time. Not just snapshots — stories.
 
 ## AI Insights
 
-NetPulse doesn't just collect data — it connects dots.
+Tracium doesn't just collect data — it connects dots.
 
 - **ISP Congestion Detection** — Is your ISP oversubscribed in your area?
 - **Wi-Fi Congestion Detection** — Too many networks on the same channel?
@@ -181,7 +181,7 @@ All of this runs locally. Your network data stays on your machine.
 
 ## Design Philosophy
 
-NetPulse takes cues from tools that feel invisible until you need them — clean, fast, and respectful of your screen real estate.
+Tracium takes cues from tools that feel invisible until you need them — clean, fast, and respectful of your screen real estate.
 
 - **Seamless** — Lives in your system tray. One click to expand.
 - **Lightweight** — Idles at near-zero CPU. Does its work, gets out of the way.
@@ -192,7 +192,7 @@ NetPulse takes cues from tools that feel invisible until you need them — clean
 
 ## How It's Built
 
-We're not here to reinvent networking. If there's a great open-source tool that already does something well — a speed test engine, a traceroute visualizer, a packet analyzer — we'll integrate it, credit it, and build on top of it. NetPulse is about the *experience*: stitching the right pieces together into something that feels like one seamless tool, not a loose collection of utilities.
+We're not here to reinvent networking. If there's a great open-source tool that already does something well — a speed test engine, a traceroute visualizer, a packet analyzer — we'll integrate it, credit it, and build on top of it. Tracium is about the *experience*: stitching the right pieces together into something that feels like one seamless tool, not a loose collection of utilities.
 
 Every dependency will be transparently credited. Good open source deserves recognition.
 
@@ -200,7 +200,7 @@ Every dependency will be transparently credited. Good open source deserves recog
 
 ## Coming Soon
 
-NetPulse is currently in active development. Some advanced features may be offered under a sustainable licensing model, but the core monitoring experience will always be free and open source.
+Tracium is currently in active development. Some advanced features may be offered under a sustainable licensing model, but the core monitoring experience will always be free and open source.
 
 ---
 

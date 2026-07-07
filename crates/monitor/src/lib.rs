@@ -1,4 +1,4 @@
-//! NetPulse monitoring orchestration.
+//! Tracium monitoring orchestration.
 //!
 //! Drives the connectivity probe on a schedule, persists each cycle to the
 //! store, and detects outages (internet considered *down* only when **every**
@@ -11,12 +11,12 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use netpulse_probe::security::{check_doh, check_dot, detect_vpn, firewall_active, scan_local_ports, COMMON_PORTS};
-use netpulse_probe::{
+use tracium_probe::security::{check_doh, check_dot, detect_vpn, firewall_active, scan_local_ports, COMMON_PORTS};
+use tracium_probe::{
     discover_devices, dns_lookup, get_wifi, probe, public_ip, traceroute, BandwidthSampler,
     ProbeConfig,
 };
-use netpulse_store::{
+use tracium_store::{
     NewConnectivitySample, SecuritySnapshot, Store, StoreError, TracerouteHop, WifiSample,
 };
 
@@ -222,7 +222,7 @@ impl Monitor {
     pub async fn record_bandwidth(
         &self,
         now: i64,
-        sample: netpulse_probe::BandwidthSample,
+        sample: tracium_probe::BandwidthSample,
     ) -> Result<(), StoreError> {
         self.store
             .insert_bandwidth_sample(now, sample.rx_bps as i64, sample.tx_bps as i64)
@@ -378,7 +378,7 @@ impl Monitor {
     pub async fn run(&self, sink: Option<tokio::sync::mpsc::Sender<StatusUpdate>>) {
         // Roll up any backlog + prune once at startup.
         if let Err(e) = self.store.maintain(now_ms()).await {
-            eprintln!("netpulse initial maintenance failed: {e}");
+            eprintln!("tracium initial maintenance failed: {e}");
         }
         let mut last_maint = now_ms();
         let mut last_dns = 0i64; // 0 => sample on the first cycle
@@ -410,52 +410,52 @@ impl Monitor {
                 }
                 Err(e) => {
                     // A transient DB error shouldn't kill monitoring.
-                    eprintln!("netpulse monitor tick failed: {e}");
+                    eprintln!("tracium monitor tick failed: {e}");
                 }
             }
             // Bandwidth every cycle (cheap; rate is over the tick interval).
             if let Err(e) = self.record_bandwidth(now, bandwidth.sample()).await {
-                eprintln!("netpulse bandwidth sample failed: {e}");
+                eprintln!("tracium bandwidth sample failed: {e}");
             }
             if now - last_dns >= dns_ms {
                 if let Err(e) = self.sample_dns(now).await {
-                    eprintln!("netpulse dns sample failed: {e}");
+                    eprintln!("tracium dns sample failed: {e}");
                 }
                 last_dns = now;
             }
             if now - last_pubip >= pubip_ms {
                 if let Err(e) = self.sample_public_ip(now).await {
-                    eprintln!("netpulse public-ip sample failed: {e}");
+                    eprintln!("tracium public-ip sample failed: {e}");
                 }
                 last_pubip = now;
             }
             if now - last_security >= security_ms {
                 if let Err(e) = self.sample_security(now).await {
-                    eprintln!("netpulse security sample failed: {e}");
+                    eprintln!("tracium security sample failed: {e}");
                 }
                 last_security = now;
             }
             if now - last_trace >= trace_ms {
                 if let Err(e) = self.sample_traceroute(now).await {
-                    eprintln!("netpulse traceroute failed: {e}");
+                    eprintln!("tracium traceroute failed: {e}");
                 }
                 last_trace = now;
             }
             if now - last_devices >= devices_ms {
                 if let Err(e) = self.sample_devices(now).await {
-                    eprintln!("netpulse device discovery failed: {e}");
+                    eprintln!("tracium device discovery failed: {e}");
                 }
                 last_devices = now;
             }
             if now - last_wifi >= wifi_ms {
                 if let Err(e) = self.sample_wifi(now).await {
-                    eprintln!("netpulse wifi sample failed: {e}");
+                    eprintln!("tracium wifi sample failed: {e}");
                 }
                 last_wifi = now;
             }
             if now - last_maint >= maint_ms {
                 if let Err(e) = self.store.maintain(now).await {
-                    eprintln!("netpulse maintenance failed: {e}");
+                    eprintln!("tracium maintenance failed: {e}");
                 }
                 last_maint = now;
             }
@@ -471,7 +471,7 @@ pub fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use netpulse_store::NewTarget;
+    use tracium_store::NewTarget;
     use tokio::net::TcpListener;
 
     fn cfg(port: u16) -> MonitorConfig {
