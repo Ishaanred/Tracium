@@ -85,6 +85,12 @@ async fn metric_history(
     state.store.rollups(&metric, &bucket, since).await.map_err(|e| e.to_string())
 }
 
+/// The most recently observed public IP, if known.
+#[tauri::command]
+async fn public_ip(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    state.store.latest_public_ip().await.map_err(|e| e.to_string())
+}
+
 /// Per-resolver DNS comparison over the last `window_secs` seconds.
 #[tauri::command]
 async fn dns_comparison(
@@ -180,6 +186,7 @@ pub fn run() {
             recent_connectivity,
             metric_history,
             dns_comparison,
+            public_ip,
             recent_events,
             recent_outages,
             export_csv

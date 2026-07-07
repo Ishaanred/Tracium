@@ -11,7 +11,7 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use netpulse_probe::{dns_lookup, probe, ProbeConfig};
+use netpulse_probe::{dns_lookup, probe, public_ip, ProbeConfig};
 use netpulse_store::{NewConnectivitySample, Store, StoreError};
 
 /// Resolvers compared on the DNS cadence (label, IP).
@@ -38,6 +38,10 @@ pub struct MonitorConfig {
     pub dns_interval: Duration,
     /// Per-lookup DNS timeout.
     pub dns_timeout: Duration,
+    /// How often to check the public IP.
+    pub public_ip_interval: Duration,
+    /// Public-IP HTTP timeout.
+    pub public_ip_timeout: Duration,
 }
 
 impl Default for MonitorConfig {
@@ -49,6 +53,8 @@ impl Default for MonitorConfig {
             maintenance_interval: Duration::from_secs(3600),
             dns_interval: Duration::from_secs(60),
             dns_timeout: Duration::from_secs(3),
+            public_ip_interval: Duration::from_secs(600),
+            public_ip_timeout: Duration::from_secs(5),
         }
     }
 }
@@ -178,6 +184,27 @@ impl Monitor {
         Ok(())
     }
 
+    /// Check the public IP (blocking HTTP off the async runtime), persist a
+    /// snapshot, and log a `public_ip_change` event when it differs from the
+    /// last known value.
+    pub async fn sample_public_ip(&self, now: i64) -> Result<(), StoreError> {
+        let timeout = self.config.public_ip_timeout;
+        let ip = tokio::task::spawn_blocking(move || public_ip(timeout)).await.unwrap_or(None);
+        let Some(ip) = ip else { return Ok(()) };
+
+        let previous = self.store.latest_public_ip().await?;
+        self.store.insert_public_ip(now, Some(&ip)).await?;
+        if let Some(prev) = previous {
+            if prev != ip {
+                let payload = format!(r#"{{"from":"{prev}","to":"{ip}"}}"#);
+                self.store
+                    .insert_event(now, "public_ip_change", "warn", None, Some(&payload))
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Open an outage when everything drops, close it when anything recovers.
     async fn update_outage(&self, now: i64, online: bool, all_down: bool) -> Result<(), StoreError> {
         let open = self.store.current_open_outage().await?;
@@ -204,11 +231,13 @@ impl Monitor {
             eprintln!("netpulse initial maintenance failed: {e}");
         }
         let mut last_maint = now_ms();
-        let mut last_dns = 0i64; // 0 => sample DNS on the first cycle
+        let mut last_dns = 0i64; // 0 => sample on the first cycle
+        let mut last_pubip = 0i64;
 
         let mut ticker = tokio::time::interval(self.config.interval);
         let maint_ms = self.config.maintenance_interval.as_millis() as i64;
         let dns_ms = self.config.dns_interval.as_millis() as i64;
+        let pubip_ms = self.config.public_ip_interval.as_millis() as i64;
         loop {
             ticker.tick().await;
             let now = now_ms();
@@ -230,6 +259,12 @@ impl Monitor {
                     eprintln!("netpulse dns sample failed: {e}");
                 }
                 last_dns = now;
+            }
+            if now - last_pubip >= pubip_ms {
+                if let Err(e) = self.sample_public_ip(now).await {
+                    eprintln!("netpulse public-ip sample failed: {e}");
+                }
+                last_pubip = now;
             }
             if now - last_maint >= maint_ms {
                 if let Err(e) = self.store.maintain(now).await {
@@ -265,6 +300,8 @@ mod tests {
             maintenance_interval: Duration::from_secs(3600),
             dns_interval: Duration::from_secs(60),
             dns_timeout: Duration::from_millis(300),
+            public_ip_interval: Duration::from_secs(600),
+            public_ip_timeout: Duration::from_millis(300),
         }
     }
 

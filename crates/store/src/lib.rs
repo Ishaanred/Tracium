@@ -311,6 +311,27 @@ impl Store {
         Ok(())
     }
 
+    /// Record a security snapshot carrying the public IP.
+    pub async fn insert_public_ip(&self, ts: i64, ip: Option<&str>) -> Result<()> {
+        sqlx::query("INSERT INTO security_snapshots (ts, public_ip) VALUES (?, ?)")
+            .bind(ts)
+            .bind(ip)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// The most recently observed public IP, if any.
+    pub async fn latest_public_ip(&self) -> Result<Option<String>> {
+        let ip = sqlx::query_scalar::<_, String>(
+            "SELECT public_ip FROM security_snapshots \
+             WHERE public_ip IS NOT NULL ORDER BY ts DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(ip)
+    }
+
     /// Record one DNS lookup result.
     pub async fn insert_dns_sample(
         &self,
@@ -831,6 +852,15 @@ mod tests {
         store.seed_default_targets(0).await.unwrap();
         let targets = store.list_targets().await.unwrap();
         assert_eq!(targets.len(), 3, "seeding twice should not duplicate");
+    }
+
+    #[tokio::test]
+    async fn public_ip_latest() {
+        let store = Store::open_in_memory().await.unwrap();
+        assert!(store.latest_public_ip().await.unwrap().is_none());
+        store.insert_public_ip(100, Some("203.0.113.4")).await.unwrap();
+        store.insert_public_ip(200, Some("203.0.113.9")).await.unwrap();
+        assert_eq!(store.latest_public_ip().await.unwrap().as_deref(), Some("203.0.113.9"));
     }
 
     #[tokio::test]

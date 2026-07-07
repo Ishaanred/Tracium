@@ -17,7 +17,9 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 pub mod dns;
+pub mod netinfo;
 pub use dns::{dns_lookup, DnsResult};
+pub use netinfo::public_ip;
 
 /// How to run one probe cycle against a target.
 #[derive(Debug, Clone)]

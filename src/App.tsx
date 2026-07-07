@@ -75,6 +75,7 @@ export default function App() {
   const [history, setHistory] = useState<Rollup[]>([]);
   const [events, setEvents] = useState<NetEvent[]>([]);
   const [dns, setDns] = useState<DnsStat[]>([]);
+  const [publicIp, setPublicIp] = useState<string | null>(null);
   const [targets, setTargets] = useState<Target[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
@@ -91,6 +92,7 @@ export default function App() {
       .catch(() => {});
     invoke<NetEvent[]>("recent_events", { limit: 20 }).then(setEvents).catch(() => {});
     invoke<DnsStat[]>("dns_comparison", { windowSecs: DAY_SECS }).then(setDns).catch(() => {});
+    invoke<string | null>("public_ip").then(setPublicIp).catch(() => {});
   };
 
   const doExport = (kind: "connectivity" | "events") => {
@@ -130,7 +132,9 @@ export default function App() {
         />
         <div>
           <h1>NetPulse</h1>
-          <p className="app__tagline">Know your network. Inside and out.</p>
+          <p className="app__tagline">
+            {publicIp ? `Public IP · ${publicIp}` : "Know your network. Inside and out."}
+          </p>
         </div>
         <span className={`badge ${online ? "badge--ok" : online === false ? "badge--bad" : ""}`}>
           {online == null ? "Starting…" : online ? "Online" : "Offline"}
