@@ -641,6 +641,21 @@ impl Store {
         Ok(rows)
     }
 
+    /// Average QoE scores over samples with `ts >= since` (a smoothed, settling
+    /// view rather than a single jumpy cycle). Returns `None` if no samples.
+    pub async fn qoe_average_since(&self, since: i64) -> Result<Option<QoeAverage>> {
+        let row = sqlx::query_as::<_, QoeAverage>(
+            "SELECT count(*) AS samples, \
+                    avg(gaming) AS gaming, avg(video_call) AS video_call, \
+                    avg(streaming) AS streaming, avg(web) AS web, avg(voip) AS voip \
+             FROM qoe_scores WHERE ts >= ?",
+        )
+        .bind(since)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok((row.samples > 0).then_some(row))
+    }
+
     /// Record a QoE score row.
     pub async fn insert_qoe(
         &self,
@@ -936,6 +951,17 @@ pub struct ConnectivitySample {
     pub rtt_max: Option<f64>,
     pub rtt_jitter: Option<f64>,
     pub up: bool,
+}
+
+/// Rolling-average QoE over a window. `samples` = number of cycles averaged.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct QoeAverage {
+    pub samples: i64,
+    pub gaming: Option<f64>,
+    pub video_call: Option<f64>,
+    pub streaming: Option<f64>,
+    pub web: Option<f64>,
+    pub voip: Option<f64>,
 }
 
 /// A speed-test result (subset of `speedtests` we currently populate).
@@ -1245,6 +1271,23 @@ mod tests {
         let totals = store.bandwidth_totals(0).await.unwrap();
         assert_eq!(totals.rx_bytes, 4_000);
         assert_eq!(totals.tx_bytes, 600);
+    }
+
+    #[tokio::test]
+    async fn qoe_rolling_average() {
+        let store = Store::open_in_memory().await.unwrap();
+        assert!(store.qoe_average_since(0).await.unwrap().is_none());
+        // Two cycles: gaming 80 then 100 -> average 90.
+        store.insert_qoe(100, 80.0, 90.0, 70.0, 60.0, 50.0).await.unwrap();
+        store.insert_qoe(200, 100.0, 100.0, 90.0, 80.0, 70.0).await.unwrap();
+        let a = store.qoe_average_since(0).await.unwrap().unwrap();
+        assert_eq!(a.samples, 2);
+        assert_eq!(a.gaming, Some(90.0));
+        assert_eq!(a.web, Some(70.0));
+        // Windowing: only the second cycle.
+        let a2 = store.qoe_average_since(150).await.unwrap().unwrap();
+        assert_eq!(a2.samples, 1);
+        assert_eq!(a2.gaming, Some(100.0));
     }
 
     #[tokio::test]

@@ -10,8 +10,8 @@ use std::sync::Mutex;
 use netpulse_monitor::{now_ms, Monitor, MonitorConfig, StatusUpdate};
 use netpulse_store::{
     BandwidthNow, BandwidthTotals, ConnectivitySample, Device, DnsResolverStat, Event, NewTarget,
-    Outage, Reliability, Rollup, SecuritySnapshot, SpeedtestRow, Store, Target, TracerouteView,
-    WifiSample,
+    Outage, QoeAverage, Reliability, Rollup, SecuritySnapshot, SpeedtestRow, Store, Target,
+    TracerouteView, WifiSample,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -49,6 +49,16 @@ async fn add_target(state: State<'_, AppState>, input: NewTarget) -> Result<Targ
 #[tauri::command]
 async fn current_status(state: State<'_, AppState>) -> Result<Option<StatusUpdate>, String> {
     Ok(state.latest.lock().unwrap().clone())
+}
+
+/// Smoothed QoE scores averaged over the last `window_secs` seconds.
+#[tauri::command]
+async fn qoe_average(
+    state: State<'_, AppState>,
+    window_secs: i64,
+) -> Result<Option<QoeAverage>, String> {
+    let since = now_ms() - window_secs * 1000;
+    state.store.qoe_average_since(since).await.map_err(|e| e.to_string())
 }
 
 /// Reliability over the last `window_secs` seconds.
@@ -288,6 +298,7 @@ pub fn run() {
             reliability,
             recent_connectivity,
             metric_history,
+            qoe_average,
             dns_comparison,
             public_ip,
             bandwidth_now,

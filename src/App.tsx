@@ -10,6 +10,15 @@ interface Qoe {
   voip: number;
 }
 
+interface QoeAverage {
+  samples: number;
+  gaming: number | null;
+  video_call: number | null;
+  streaming: number | null;
+  web: number | null;
+  voip: number | null;
+}
+
 interface StatusUpdate {
   ts: number;
   online: boolean;
@@ -120,6 +129,7 @@ interface Target {
 }
 
 const DAY_SECS = 24 * 60 * 60;
+const QOE_WINDOW_SECS = 30 * 60; // smooth QoE over the last 30 minutes
 
 function fmtMs(v: number | null | undefined): string {
   return v == null ? "—" : `${v.toFixed(0)} ms`;
@@ -141,6 +151,7 @@ function fmtBytes(b: number | null | undefined): string {
 
 export default function App() {
   const [status, setStatus] = useState<StatusUpdate | null>(null);
+  const [qoe, setQoe] = useState<QoeAverage | null>(null);
   const [rel, setRel] = useState<Reliability | null>(null);
   const [history, setHistory] = useState<Rollup[]>([]);
   const [events, setEvents] = useState<NetEvent[]>([]);
@@ -192,6 +203,9 @@ export default function App() {
   // Refresh derived summaries (called on mount + after each status tick).
   const refreshDerived = () => {
     invoke<Reliability>("reliability", { windowSecs: DAY_SECS }).then(setRel).catch(() => {});
+    invoke<QoeAverage | null>("qoe_average", { windowSecs: QOE_WINDOW_SECS })
+      .then(setQoe)
+      .catch(() => {});
     invoke<Rollup[]>("metric_history", {
       metric: "latency",
       bucket: "hour",
@@ -313,16 +327,21 @@ export default function App() {
       <section className="card">
         <CardTitle
           title="Quality of experience"
-          info="0–100 scores estimating how good each activity feels right now, computed from latency, jitter and packet loss. 80+ is great, under 50 is rough."
+          info="0–100 scores estimating how good each activity feels, averaged over the last 30 minutes so they settle instead of jumping each cycle. Computed from latency, jitter and packet loss — 80+ is great, under 50 is rough."
         />
-        {status?.qoe ? (
-          <div className="grid">
-            <Score label="Gaming" value={status.qoe.gaming} />
-            <Score label="Video call" value={status.qoe.video_call} />
-            <Score label="Streaming" value={status.qoe.streaming} />
-            <Score label="VoIP" value={status.qoe.voip} />
-            <Score label="Web" value={status.qoe.web} />
-          </div>
+        {qoe && qoe.samples > 0 ? (
+          <>
+            <div className="grid">
+              <Score label="Gaming" value={qoe.gaming ?? 0} />
+              <Score label="Video call" value={qoe.video_call ?? 0} />
+              <Score label="Streaming" value={qoe.streaming ?? 0} />
+              <Score label="VoIP" value={qoe.voip ?? 0} />
+              <Score label="Web" value={qoe.web ?? 0} />
+            </div>
+            <p className="status" style={{ marginTop: 8, fontSize: 12 }}>
+              averaged over last 30 min · {qoe.samples} samples
+            </p>
+          </>
         ) : (
           <p className="status">{online === false ? "Offline." : "Scoring…"}</p>
         )}
