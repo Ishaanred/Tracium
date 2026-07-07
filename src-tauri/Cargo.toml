@@ -18,6 +18,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 netpulse-store = { path = "../crates/store" }
+netpulse-monitor = { path = "../crates/monitor" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

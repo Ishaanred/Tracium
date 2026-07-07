@@ -1,0 +1,13 @@
+[package]
+name = "netpulse-probe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "NetPulse connectivity probing: unprivileged TCP-connect latency/jitter/loss."
+
+[dependencies]
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

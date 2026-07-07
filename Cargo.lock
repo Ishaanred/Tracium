@@ -2231,12 +2231,31 @@ name = "netpulse"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "netpulse-monitor",
  "netpulse-store",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
+ "tokio",
+]
+
+[[package]]
+name = "netpulse-monitor"
+version = "0.1.0"
+dependencies = [
+ "netpulse-probe",
+ "netpulse-store",
+ "serde",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "netpulse-probe"
+version = "0.1.0"
+dependencies = [
  "tokio",
 ]
 

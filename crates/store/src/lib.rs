@@ -106,6 +106,252 @@ impl Store {
             created_at: input.created_at,
         })
     }
+
+    /// Seed the default internet probe targets if the table is empty. Idempotent.
+    pub async fn seed_default_targets(&self, now: i64) -> Result<()> {
+        let existing: i64 = sqlx::query_scalar("SELECT count(*) FROM targets")
+            .fetch_one(&self.pool)
+            .await?;
+        if existing > 0 {
+            return Ok(());
+        }
+        let defaults = [
+            ("Cloudflare", "1.1.1.1", 4),
+            ("Google", "8.8.8.8", 4),
+            ("Cloudflare v6", "2606:4700:4700::1111", 6),
+        ];
+        for (label, host, ipv) in defaults {
+            self.add_target(NewTarget {
+                label: label.into(),
+                host: host.into(),
+                kind: "internet".into(),
+                ip_version: Some(ipv),
+                enabled: true,
+                created_at: now,
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Seed default settings if absent (JSON scalar values). Idempotent.
+    pub async fn seed_default_settings(&self, now: i64) -> Result<()> {
+        let defaults = [
+            ("retention.raw_days", "7"),
+            ("rollups.global_enabled", "true"),
+            ("rollups.per_target_enabled", "false"),
+        ];
+        for (k, v) in defaults {
+            sqlx::query(
+                "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) \
+                 ON CONFLICT(key) DO NOTHING",
+            )
+            .bind(k)
+            .bind(v)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Insert one connectivity probe-cycle result.
+    pub async fn insert_connectivity_sample(&self, s: NewConnectivitySample) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO connectivity_samples \
+             (ts, target_id, ip_version, sent, received, loss_pct, \
+              rtt_min, rtt_avg, rtt_max, rtt_jitter, up) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(s.ts)
+        .bind(s.target_id)
+        .bind(s.ip_version)
+        .bind(s.sent)
+        .bind(s.received)
+        .bind(s.loss_pct)
+        .bind(s.rtt_min)
+        .bind(s.rtt_avg)
+        .bind(s.rtt_max)
+        .bind(s.rtt_jitter)
+        .bind(s.up as i64)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Most recent connectivity samples across all targets, newest first.
+    pub async fn recent_connectivity(&self, limit: i64) -> Result<Vec<ConnectivitySample>> {
+        let rows = sqlx::query_as::<_, ConnectivitySample>(
+            "SELECT id, ts, target_id, ip_version, sent, received, loss_pct, \
+                    rtt_min, rtt_avg, rtt_max, rtt_jitter, up \
+             FROM connectivity_samples ORDER BY ts DESC, id DESC LIMIT ?",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// The currently-open outage (no `ts_end`), if the internet is down now.
+    pub async fn current_open_outage(&self) -> Result<Option<Outage>> {
+        let row = sqlx::query_as::<_, Outage>(
+            "SELECT id, ts_start, ts_end, duration_ms, reconnect_ms, cause \
+             FROM outages WHERE ts_end IS NULL ORDER BY ts_start DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Open a new outage starting at `ts`, returning its id.
+    pub async fn open_outage(&self, ts: i64, cause: Option<&str>) -> Result<i64> {
+        let id = sqlx::query_scalar(
+            "INSERT INTO outages (ts_start, cause) VALUES (?, ?) RETURNING id",
+        )
+        .bind(ts)
+        .bind(cause)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(id)
+    }
+
+    /// Close an open outage, materializing duration and reconnect time.
+    pub async fn close_outage(&self, id: i64, ts_end: i64, reconnect_ms: Option<i64>) -> Result<()> {
+        sqlx::query(
+            "UPDATE outages SET ts_end = ?, duration_ms = ? - ts_start, reconnect_ms = ? \
+             WHERE id = ?",
+        )
+        .bind(ts_end)
+        .bind(ts_end)
+        .bind(reconnect_ms)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Record a discrete event.
+    pub async fn insert_event(
+        &self,
+        ts: i64,
+        kind: &str,
+        severity: &str,
+        duration_ms: Option<i64>,
+        payload: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO events (ts, kind, severity, duration_ms, payload) \
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(ts)
+        .bind(kind)
+        .bind(severity)
+        .bind(duration_ms)
+        .bind(payload)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Reliability summary over samples with `ts >= since`.
+    pub async fn reliability_since(&self, since: i64) -> Result<Reliability> {
+        let (samples, up_samples): (i64, i64) = sqlx::query_as(
+            "SELECT count(*), coalesce(sum(up), 0) FROM connectivity_samples WHERE ts >= ?",
+        )
+        .bind(since)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let avg_latency: Option<f64> = sqlx::query_scalar(
+            "SELECT avg(rtt_avg) FROM connectivity_samples WHERE ts >= ? AND rtt_avg IS NOT NULL",
+        )
+        .bind(since)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let avg_loss: Option<f64> = sqlx::query_scalar(
+            "SELECT avg(loss_pct) FROM connectivity_samples WHERE ts >= ?",
+        )
+        .bind(since)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let disconnects: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM outages WHERE ts_start >= ?")
+                .bind(since)
+                .fetch_one(&self.pool)
+                .await?;
+
+        let uptime_pct = if samples > 0 {
+            up_samples as f64 / samples as f64 * 100.0
+        } else {
+            100.0
+        };
+
+        Ok(Reliability {
+            samples,
+            up_samples,
+            uptime_pct,
+            avg_latency_ms: avg_latency,
+            avg_loss_pct: avg_loss,
+            disconnects,
+        })
+    }
+}
+
+/// A connectivity probe-cycle result ready to persist.
+#[derive(Debug, Clone)]
+pub struct NewConnectivitySample {
+    pub ts: i64,
+    pub target_id: i64,
+    pub ip_version: i64,
+    pub sent: i64,
+    pub received: i64,
+    pub loss_pct: f64,
+    pub rtt_min: Option<f64>,
+    pub rtt_avg: Option<f64>,
+    pub rtt_max: Option<f64>,
+    pub rtt_jitter: Option<f64>,
+    pub up: bool,
+}
+
+/// A stored connectivity sample.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct ConnectivitySample {
+    pub id: i64,
+    pub ts: i64,
+    pub target_id: i64,
+    pub ip_version: i64,
+    pub sent: i64,
+    pub received: i64,
+    pub loss_pct: f64,
+    pub rtt_min: Option<f64>,
+    pub rtt_avg: Option<f64>,
+    pub rtt_max: Option<f64>,
+    pub rtt_jitter: Option<f64>,
+    pub up: bool,
+}
+
+/// A recorded (possibly ongoing) internet outage.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct Outage {
+    pub id: i64,
+    pub ts_start: i64,
+    pub ts_end: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub reconnect_ms: Option<i64>,
+    pub cause: Option<String>,
+}
+
+/// Reliability rollup over a time window.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Reliability {
+    pub samples: i64,
+    pub up_samples: i64,
+    pub uptime_pct: f64,
+    pub avg_latency_ms: Option<f64>,
+    pub avg_loss_pct: Option<f64>,
+    pub disconnects: i64,
 }
 
 /// A configured probe target (a host NetPulse pings/queries).
@@ -231,6 +477,84 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].host, "1.1.1.1");
         assert_eq!(all[0].ip_version, Some(4));
+    }
+
+    #[tokio::test]
+    async fn seed_default_targets_is_idempotent() {
+        let store = Store::open_in_memory().await.unwrap();
+        store.seed_default_targets(0).await.unwrap();
+        store.seed_default_targets(0).await.unwrap();
+        let targets = store.list_targets().await.unwrap();
+        assert_eq!(targets.len(), 3, "seeding twice should not duplicate");
+    }
+
+    #[tokio::test]
+    async fn seed_default_settings_is_idempotent() {
+        let store = Store::open_in_memory().await.unwrap();
+        store.seed_default_settings(0).await.unwrap();
+        store.seed_default_settings(0).await.unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM settings")
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
+        assert_eq!(n, 3);
+        let raw_days: String =
+            sqlx::query_scalar("SELECT value FROM settings WHERE key = 'retention.raw_days'")
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(raw_days, "7");
+    }
+
+    #[tokio::test]
+    async fn connectivity_and_reliability() {
+        let store = Store::open_in_memory().await.unwrap();
+        store.seed_default_targets(0).await.unwrap();
+
+        let sample = |ts: i64, up: bool| NewConnectivitySample {
+            ts,
+            target_id: 1,
+            ip_version: 4,
+            sent: 5,
+            received: if up { 5 } else { 0 },
+            loss_pct: if up { 0.0 } else { 100.0 },
+            rtt_min: up.then_some(10.0),
+            rtt_avg: up.then_some(20.0),
+            rtt_max: up.then_some(30.0),
+            rtt_jitter: up.then_some(2.0),
+            up,
+        };
+        // 3 up, 1 down.
+        for (ts, up) in [(100, true), (200, true), (300, false), (400, true)] {
+            store.insert_connectivity_sample(sample(ts, up)).await.unwrap();
+        }
+
+        let recent = store.recent_connectivity(10).await.unwrap();
+        assert_eq!(recent.len(), 4);
+        assert_eq!(recent[0].ts, 400, "newest first");
+
+        let r = store.reliability_since(0).await.unwrap();
+        assert_eq!(r.samples, 4);
+        assert_eq!(r.up_samples, 3);
+        assert_eq!(r.uptime_pct, 75.0);
+        assert_eq!(r.avg_latency_ms, Some(20.0));
+    }
+
+    #[tokio::test]
+    async fn outage_open_and_close() {
+        let store = Store::open_in_memory().await.unwrap();
+        assert!(store.current_open_outage().await.unwrap().is_none());
+
+        let id = store.open_outage(1000, Some("all targets down")).await.unwrap();
+        let open = store.current_open_outage().await.unwrap().unwrap();
+        assert_eq!(open.id, id);
+        assert!(open.ts_end.is_none());
+
+        store.close_outage(id, 4000, Some(1200)).await.unwrap();
+        assert!(store.current_open_outage().await.unwrap().is_none());
+
+        let r = store.reliability_since(0).await.unwrap();
+        assert_eq!(r.disconnects, 1);
     }
 
     #[tokio::test]

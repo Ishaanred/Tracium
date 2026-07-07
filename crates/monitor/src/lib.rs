@@ -1,0 +1,255 @@
+//! NetPulse monitoring orchestration.
+//!
+//! Drives the connectivity probe on a schedule, persists each cycle to the
+//! store, and detects outages (internet considered *down* only when **every**
+//! enabled internet target is unreachable in a cycle). Emits a [`StatusUpdate`]
+//! after each tick so the UI can react live.
+//!
+//! The per-cycle work is [`Monitor::tick`], which takes an explicit `now` and
+//! is fully deterministic/testable. [`Monitor::run`] is the thin real-time
+//! wrapper around it.
+
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use netpulse_probe::{probe, ProbeConfig};
+use netpulse_store::{NewConnectivitySample, Store, StoreError};
+
+/// How the monitor samples.
+#[derive(Debug, Clone)]
+pub struct MonitorConfig {
+    /// Time between probe cycles.
+    pub interval: Duration,
+    /// TCP port to connect to on each target (default 443).
+    pub port: u16,
+    /// Per-target probe settings (count, timeout, gap).
+    pub probe: ProbeConfig,
+}
+
+impl Default for MonitorConfig {
+    fn default() -> Self {
+        Self { interval: Duration::from_secs(15), port: 443, probe: ProbeConfig::default() }
+    }
+}
+
+/// Live status emitted after each cycle.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StatusUpdate {
+    pub ts: i64,
+    pub online: bool,
+    pub targets_up: i64,
+    pub targets_total: i64,
+    /// Lowest average RTT across targets that responded (ms).
+    pub best_latency_ms: Option<f64>,
+    /// Mean loss across probed targets this cycle.
+    pub avg_loss_pct: Option<f64>,
+    pub outage_ongoing: bool,
+}
+
+pub struct Monitor {
+    store: Store,
+    config: MonitorConfig,
+}
+
+impl Monitor {
+    pub fn new(store: Store, config: MonitorConfig) -> Self {
+        Self { store, config }
+    }
+
+    /// Run one probe cycle at time `now` (unix ms): probe every enabled internet
+    /// target, persist samples, update outage state, and return live status.
+    pub async fn tick(&self, now: i64) -> Result<StatusUpdate, StoreError> {
+        let targets: Vec<_> = self
+            .store
+            .list_targets()
+            .await?
+            .into_iter()
+            .filter(|t| t.enabled && t.kind == "internet")
+            .collect();
+
+        let mut targets_up = 0i64;
+        let mut best_latency: Option<f64> = None;
+        let mut loss_sum = 0.0f64;
+
+        for t in &targets {
+            let ipv = t.ip_version.unwrap_or(4) as u8;
+            let cfg = ProbeConfig { ip_version: Some(ipv), ..self.config.probe.clone() };
+            let out = probe(&t.host, self.config.port, &cfg).await;
+
+            self.store
+                .insert_connectivity_sample(NewConnectivitySample {
+                    ts: now,
+                    target_id: t.id,
+                    ip_version: ipv as i64,
+                    sent: out.sent as i64,
+                    received: out.received as i64,
+                    loss_pct: out.loss_pct,
+                    rtt_min: out.rtt_min,
+                    rtt_avg: out.rtt_avg,
+                    rtt_max: out.rtt_max,
+                    rtt_jitter: out.rtt_jitter,
+                    up: out.up,
+                })
+                .await?;
+
+            loss_sum += out.loss_pct;
+            if out.up {
+                targets_up += 1;
+                if let Some(avg) = out.rtt_avg {
+                    best_latency = Some(best_latency.map_or(avg, |b| b.min(avg)));
+                }
+            }
+        }
+
+        let total = targets.len() as i64;
+        let online = targets_up > 0;
+        // Only meaningful when we actually have targets to judge by.
+        let all_down = total > 0 && targets_up == 0;
+
+        self.update_outage(now, online, all_down).await?;
+
+        let avg_loss = (total > 0).then(|| loss_sum / total as f64);
+        Ok(StatusUpdate {
+            ts: now,
+            online,
+            targets_up,
+            targets_total: total,
+            best_latency_ms: best_latency,
+            avg_loss_pct: avg_loss,
+            outage_ongoing: all_down,
+        })
+    }
+
+    /// Open an outage when everything drops, close it when anything recovers.
+    async fn update_outage(&self, now: i64, online: bool, all_down: bool) -> Result<(), StoreError> {
+        let open = self.store.current_open_outage().await?;
+        match (open, all_down, online) {
+            (None, true, _) => {
+                self.store.open_outage(now, Some("all internet targets unreachable")).await?;
+                self.store.insert_event(now, "disconnect", "critical", None, None).await?;
+            }
+            (Some(o), _, true) => {
+                let reconnect = now - o.ts_start;
+                self.store.close_outage(o.id, now, Some(reconnect)).await?;
+                self.store.insert_event(now, "reconnect", "info", Some(reconnect), None).await?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Real-time loop: tick every `interval`, forwarding each status to `sink`.
+    /// Runs until the sink is closed (receiver dropped) or forever otherwise.
+    pub async fn run(&self, sink: Option<tokio::sync::mpsc::Sender<StatusUpdate>>) {
+        let mut ticker = tokio::time::interval(self.config.interval);
+        loop {
+            ticker.tick().await;
+            match self.tick(now_ms()).await {
+                Ok(update) => {
+                    if let Some(tx) = &sink {
+                        if tx.send(update).await.is_err() {
+                            break; // receiver gone; stop.
+                        }
+                    }
+                }
+                Err(e) => {
+                    // A transient DB error shouldn't kill monitoring.
+                    eprintln!("netpulse monitor tick failed: {e}");
+                }
+            }
+        }
+    }
+}
+
+/// Current unix time in milliseconds.
+pub fn now_ms() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use netpulse_store::NewTarget;
+    use tokio::net::TcpListener;
+
+    fn cfg(port: u16) -> MonitorConfig {
+        MonitorConfig {
+            interval: Duration::from_millis(1),
+            port,
+            probe: ProbeConfig {
+                count: 3,
+                timeout: Duration::from_millis(500),
+                gap: Duration::ZERO,
+                ip_version: None,
+            },
+        }
+    }
+
+    async fn add_local_target(store: &Store, host: &str) {
+        store
+            .add_target(NewTarget {
+                label: "local".into(),
+                host: host.into(),
+                kind: "internet".into(),
+                ip_version: Some(4),
+                enabled: true,
+                created_at: 0,
+            })
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn tick_online_persists_and_reports() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { while listener.accept().await.is_ok() {} });
+
+        let store = Store::open_in_memory().await.unwrap();
+        add_local_target(&store, "127.0.0.1").await;
+
+        let mon = Monitor::new(store.clone(), cfg(port));
+        let update = mon.tick(1000).await.unwrap();
+
+        assert!(update.online);
+        assert_eq!(update.targets_up, 1);
+        assert_eq!(update.targets_total, 1);
+        assert!(update.best_latency_ms.is_some());
+        assert!(!update.outage_ongoing);
+
+        assert_eq!(store.recent_connectivity(10).await.unwrap().len(), 1);
+        assert!(store.current_open_outage().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn outage_opens_when_down_and_closes_on_recovery() {
+        // A port nothing listens on -> every probe fails.
+        let dead = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let dead_port = dead.local_addr().unwrap().port();
+        drop(dead);
+
+        let store = Store::open_in_memory().await.unwrap();
+        add_local_target(&store, "127.0.0.1").await;
+
+        // Cycle 1: down -> outage opens.
+        let down = Monitor::new(store.clone(), cfg(dead_port));
+        let u1 = down.tick(1000).await.unwrap();
+        assert!(!u1.online);
+        assert!(u1.outage_ongoing);
+        let open = store.current_open_outage().await.unwrap();
+        assert!(open.is_some(), "outage should be open");
+
+        // Cycle 2: bring up a listener on a fresh port -> recovery closes outage.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let live_port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { while listener.accept().await.is_ok() {} });
+
+        let up = Monitor::new(store.clone(), cfg(live_port));
+        let u2 = up.tick(4000).await.unwrap();
+        assert!(u2.online);
+        assert!(store.current_open_outage().await.unwrap().is_none(), "outage should close");
+
+        let r = store.reliability_since(0).await.unwrap();
+        assert_eq!(r.disconnects, 1);
+        assert_eq!(r.samples, 2);
+    }
+}

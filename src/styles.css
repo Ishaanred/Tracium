@@ -49,6 +49,72 @@ body {
   100% { box-shadow: 0 0 0 0 rgba(8, 145, 178, 0); }
 }
 
+.app__pulse--down {
+  background: var(--bad);
+  animation: none;
+  box-shadow: none;
+}
+
+.badge {
+  margin-left: auto;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--border);
+  color: var(--muted);
+}
+.badge--ok {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--ok);
+}
+.badge--bad {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--bad);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.stat__label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.stat__value {
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.stat__hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Stats inside a card shouldn't double-border. */
+.card .grid {
+  margin-bottom: 0;
+}
+.card .stat {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
 .app h1 {
   margin: 0;
   font-size: 26px;

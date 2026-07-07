@@ -1,0 +1,16 @@
+[package]
+name = "netpulse-monitor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "NetPulse monitoring orchestration: sampler loop + outage detection."
+
+[dependencies]
+netpulse-store = { path = "../store" }
+netpulse-probe = { path = "../probe" }
+tokio = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

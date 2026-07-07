@@ -63,6 +63,22 @@ pnpm tauri build        # produce a release bundle
 cargo test -p netpulse-store   # storage layer tests
 ```
 
+## How connectivity probing works
+
+NetPulse measures reachability with **unprivileged TCP-connect timing**, not
+ICMP echo. ICMP needs raw sockets (root / `CAP_NET_RAW`) on Linux, which breaks
+the zero-setup promise. Timing the TCP handshake to a known-open port (443 on
+1.1.1.1 / 8.8.8.8) needs no privileges, is identical on Windows and Linux, and
+is a stable signal for latency/jitter/loss.
+
+- `netpulse-probe` — one probe cycle = N TCP connects; aggregates min/avg/max
+  RTT, jitter (mean consecutive-diff), and loss. No DB/GUI deps → unit-tested
+  with local sockets (`cargo test -p netpulse-probe`; real-internet smoke test
+  behind `--ignored`).
+- `netpulse-monitor` — samples every enabled internet target on an interval,
+  writes `connectivity_samples`, and opens/closes `outages` (internet is "down"
+  only when *every* target fails a cycle). Emits a `status` event to the UI.
+
 ## Database
 
 - Created on first launch at the platform app-data dir
