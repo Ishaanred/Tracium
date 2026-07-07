@@ -26,13 +26,16 @@ interface StatusUpdate {
   targets_total: number;
   best_latency_ms: number | null;
   avg_loss_pct: number | null;
+  avg_jitter_ms: number | null;
   outage_ongoing: boolean;
   qoe: Qoe | null;
 }
 
 interface Rollup {
   bucket_ts: number;
+  min: number | null;
   avg: number | null;
+  max: number | null;
   p95: number | null;
 }
 
@@ -116,7 +119,18 @@ interface Reliability {
   uptime_pct: number;
   avg_latency_ms: number | null;
   avg_loss_pct: number | null;
+  avg_jitter_ms: number | null;
   disconnects: number;
+}
+
+interface TargetStatus {
+  id: number;
+  label: string;
+  host: string;
+  ip_version: number | null;
+  rtt_avg: number | null;
+  loss_pct: number | null;
+  up: boolean | null;
 }
 
 interface Target {
@@ -154,6 +168,7 @@ export default function App() {
   const [qoe, setQoe] = useState<QoeAverage | null>(null);
   const [rel, setRel] = useState<Reliability | null>(null);
   const [history, setHistory] = useState<Rollup[]>([]);
+  const [targetStatus, setTargetStatus] = useState<TargetStatus[]>([]);
   const [events, setEvents] = useState<NetEvent[]>([]);
   const [dns, setDns] = useState<DnsStat[]>([]);
   const [publicIp, setPublicIp] = useState<string | null>(null);
@@ -213,6 +228,7 @@ export default function App() {
     })
       .then(setHistory)
       .catch(() => {});
+    invoke<TargetStatus[]>("target_status").then(setTargetStatus).catch(() => {});
     invoke<NetEvent[]>("recent_events", { limit: 20 }).then(setEvents).catch(() => {});
     invoke<DnsStat[]>("dns_comparison", { windowSecs: DAY_SECS }).then(setDns).catch(() => {});
     invoke<string | null>("public_ip").then(setPublicIp).catch(() => {});
@@ -285,6 +301,12 @@ export default function App() {
           info="Round-trip time for a packet to reach a server and come back. Lower is snappier — under ~30 ms feels instant; over ~150 ms is noticeable in calls and games."
         />
         <Stat
+          label="Jitter"
+          value={fmtMs(status?.avg_jitter_ms)}
+          hint="this cycle"
+          info="How much latency varies between packets. Low jitter means a steady connection; high jitter causes choppy calls and rubber-banding in games, even when average latency looks fine."
+        />
+        <Stat
           label="Packet loss"
           value={fmtPct(status?.avg_loss_pct)}
           hint="this cycle"
@@ -297,6 +319,33 @@ export default function App() {
           info="How many of the monitored servers responded this cycle. The internet is only marked offline when every target fails."
         />
       </section>
+
+      {targetStatus.length > 0 && (
+        <section className="card">
+          <CardTitle
+            title="Targets"
+            info="Each server Tracium probes, with its own live latency and reachability. The Latency tile above shows the best of these. A permanently-down IPv6 target just means your network has no IPv6 — it isn't counted as loss."
+          />
+          <ul className="targets">
+            {targetStatus.map((t) => (
+              <li key={t.id}>
+                <span className={`dot dot--${t.up ? "info" : t.up === false ? "critical" : ""}`} aria-hidden />
+                <strong>{t.label}</strong>
+                <span className="targets__host">{t.host}</span>
+                <span className="targets__kind">
+                  {t.up === false
+                    ? "down"
+                    : t.rtt_avg != null
+                      ? `${t.rtt_avg.toFixed(1)} ms`
+                      : "—"}
+                  {" · IPv"}
+                  {t.ip_version ?? "?"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="card">
         <CardTitle
@@ -348,9 +397,19 @@ export default function App() {
       </section>
 
       <section className="card">
-        <h2>Latency — last 24h (hourly avg)</h2>
+        <CardTitle
+          title="Latency — last 24h (hourly avg)"
+          info="Hourly average round-trip time. p95 = the worst-hour 95th percentile, i.e. how bad latency gets during the rough patches — a better 'is it laggy?' signal than the average."
+        />
         {history.length > 1 ? (
-          <Sparkline points={history.map((h) => h.avg ?? 0)} />
+          <>
+            <Sparkline points={history.map((h) => h.avg ?? 0)} />
+            <p className="status" style={{ marginTop: 8, fontSize: 12 }}>
+              min {fmtMs(Math.min(...history.map((h) => h.min ?? Infinity)))} · p95 (worst hour){" "}
+              {fmtMs(Math.max(...history.map((h) => h.p95 ?? 0)))} · max{" "}
+              {fmtMs(Math.max(...history.map((h) => h.max ?? 0)))}
+            </p>
+          </>
         ) : (
           <p className="status">Not enough history yet — building hourly rollups.</p>
         )}
@@ -367,6 +426,7 @@ export default function App() {
               info="Share of samples in the last 24h where the internet was reachable. Measured from your machine, not your ISP's claims."
             />
             <Stat label="Avg latency" value={fmtMs(rel.avg_latency_ms)} info="Average round-trip time across all samples in the window." />
+            <Stat label="Avg jitter" value={fmtMs(rel.avg_jitter_ms)} info="Average latency variation across the window." />
             <Stat label="Avg loss" value={fmtPct(rel.avg_loss_pct)} info="Average packet loss across the window." />
             <Stat
               label="Disconnects"

@@ -98,6 +98,8 @@ pub struct StatusUpdate {
     pub best_latency_ms: Option<f64>,
     /// Mean loss across probed targets this cycle.
     pub avg_loss_pct: Option<f64>,
+    /// Mean jitter across reachable targets this cycle (ms).
+    pub avg_jitter_ms: Option<f64>,
     pub outage_ongoing: bool,
     /// Quality-of-experience scores for this cycle; `None` while offline.
     pub qoe: Option<Qoe>,
@@ -176,12 +178,12 @@ impl Monitor {
         self.update_outage(now, online, all_down).await?;
 
         let avg_loss = (targets_up > 0).then(|| loss_sum / targets_up as f64);
+        let avg_jitter = (jitter_n > 0).then(|| jitter_sum / jitter_n as f64);
 
         // Quality-of-experience scores from this cycle's best latency + mean
         // jitter + mean loss. Persisted for trending; None while offline.
         let qoe = if online {
-            let jitter = if jitter_n > 0 { jitter_sum / jitter_n as f64 } else { 0.0 };
-            let q = Qoe::score(best_latency.unwrap_or(0.0), jitter, avg_loss.unwrap_or(0.0));
+            let q = Qoe::score(best_latency.unwrap_or(0.0), avg_jitter.unwrap_or(0.0), avg_loss.unwrap_or(0.0));
             self.store
                 .insert_qoe(now, q.gaming, q.video_call, q.streaming, q.web, q.voip)
                 .await?;
@@ -197,6 +199,7 @@ impl Monitor {
             targets_total: total,
             best_latency_ms: best_latency,
             avg_loss_pct: avg_loss,
+            avg_jitter_ms: avg_jitter,
             outage_ongoing: all_down,
             qoe,
         })

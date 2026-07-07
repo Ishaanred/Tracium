@@ -735,6 +735,13 @@ impl Store {
         .fetch_one(&self.pool)
         .await?;
 
+        let avg_jitter: Option<f64> = sqlx::query_scalar(
+            "SELECT avg(rtt_jitter) FROM connectivity_samples WHERE ts >= ? AND rtt_jitter IS NOT NULL",
+        )
+        .bind(since)
+        .fetch_one(&self.pool)
+        .await?;
+
         let disconnects: i64 =
             sqlx::query_scalar("SELECT count(*) FROM outages WHERE ts_start >= ?")
                 .bind(since)
@@ -753,8 +760,26 @@ impl Store {
             uptime_pct,
             avg_latency_ms: avg_latency,
             avg_loss_pct: avg_loss,
+            avg_jitter_ms: avg_jitter,
             disconnects,
         })
+    }
+
+    /// Latest per-target status (each enabled target with its most recent
+    /// sample). Powers the per-target latency card + IPv4/IPv6 breakdown.
+    pub async fn latest_per_target(&self) -> Result<Vec<TargetStatus>> {
+        let rows = sqlx::query_as::<_, TargetStatus>(
+            "SELECT t.id, t.label, t.host, t.ip_version, \
+                    c.rtt_avg, c.rtt_jitter, c.loss_pct, c.up, c.ts \
+             FROM targets t \
+             LEFT JOIN connectivity_samples c \
+               ON c.id = (SELECT id FROM connectivity_samples \
+                          WHERE target_id = t.id ORDER BY ts DESC LIMIT 1) \
+             WHERE t.enabled = 1 ORDER BY t.id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
     }
 
     /// Roll up connectivity metrics (latency, loss, jitter) into `metric_rollups`
@@ -1117,7 +1142,22 @@ pub struct Reliability {
     pub uptime_pct: f64,
     pub avg_latency_ms: Option<f64>,
     pub avg_loss_pct: Option<f64>,
+    pub avg_jitter_ms: Option<f64>,
     pub disconnects: i64,
+}
+
+/// Latest status of one probe target (for the per-target card).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct TargetStatus {
+    pub id: i64,
+    pub label: String,
+    pub host: String,
+    pub ip_version: Option<i64>,
+    pub rtt_avg: Option<f64>,
+    pub rtt_jitter: Option<f64>,
+    pub loss_pct: Option<f64>,
+    pub up: Option<bool>,
+    pub ts: Option<i64>,
 }
 
 /// A configured probe target (a host Tracium pings/queries).

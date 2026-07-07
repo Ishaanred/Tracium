@@ -11,7 +11,7 @@ use tracium_monitor::{now_ms, Monitor, MonitorConfig, StatusUpdate};
 use tracium_store::{
     BandwidthNow, BandwidthTotals, ConnectivitySample, Device, DnsResolverStat, Event, NewTarget,
     Outage, QoeAverage, Reliability, Rollup, SecuritySnapshot, SpeedtestRow, Store, Target,
-    TracerouteView, WifiSample,
+    TargetStatus, TracerouteView, WifiSample,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -38,6 +38,12 @@ async fn db_health(state: State<'_, AppState>) -> Result<DbHealth, String> {
 #[tauri::command]
 async fn list_targets(state: State<'_, AppState>) -> Result<Vec<Target>, String> {
     state.store.list_targets().await.map_err(|e| e.to_string())
+}
+
+/// Each enabled target with its latest sample (per-target latency + up/down).
+#[tauri::command]
+async fn target_status(state: State<'_, AppState>) -> Result<Vec<TargetStatus>, String> {
+    state.store.latest_per_target().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -293,6 +299,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             db_health,
             list_targets,
+            target_status,
             add_target,
             current_status,
             reliability,
