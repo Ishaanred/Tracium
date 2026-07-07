@@ -17,7 +17,9 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 pub mod bandwidth;
+pub mod bufferbloat;
 pub mod devices;
+pub use bufferbloat::{run_speedtest_bufferbloat, Bufferbloat, SpeedAndBloat};
 pub mod dns;
 pub mod netinfo;
 pub mod ping;

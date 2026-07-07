@@ -87,6 +87,9 @@ interface Speedtest {
   upload_mbps: number | null;
   ping_ms: number | null;
   jitter_ms: number | null;
+  idle_latency_ms: number | null;
+  loaded_latency_ms: number | null;
+  bufferbloat_grade: string | null;
 }
 
 interface RouterInfo {
@@ -398,6 +401,23 @@ export default function App() {
             <Stat label="Upload" value={fmtRate((speed.upload_mbps ?? 0) * 1e6)} />
             <Stat label="Ping" value={fmtMs(speed.ping_ms)} />
             <Stat label="Jitter" value={fmtMs(speed.jitter_ms)} />
+            {speed.bufferbloat_grade && (
+              <div className="stat">
+                <span className="stat__label">
+                  Bufferbloat
+                  <Info text="How much latency rises when the link is saturated (idle vs under-load). A is great; D/F means video calls and games suffer during uploads/downloads even on a 'fast' connection." />
+                </span>
+                <span
+                  className="stat__value"
+                  style={{ color: scoreColor(speed.bufferbloat_grade <= "B" ? 100 : speed.bufferbloat_grade === "C" ? 60 : 30) }}
+                >
+                  {speed.bufferbloat_grade}
+                </span>
+                <span className="stat__hint">
+                  {fmtMs(speed.idle_latency_ms)} → {fmtMs(speed.loaded_latency_ms)}
+                </span>
+              </div>
+            )}
           </div>
         )}
         {speedMsg && <p className="status">{speedMsg}</p>}

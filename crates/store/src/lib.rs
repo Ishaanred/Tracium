@@ -407,11 +407,14 @@ impl Store {
         Ok(BandwidthTotals { rx_bytes: rx, tx_bytes: tx })
     }
 
-    /// Record a speed-test result.
+    /// Record a speed-test result (incl. bufferbloat: idle vs loaded latency +
+    /// grade). Loaded latency is stored in `down_latency_ms`.
     pub async fn insert_speedtest(&self, s: &SpeedtestRow) -> Result<()> {
         sqlx::query(
-            "INSERT INTO speedtests (ts, engine, server, download_mbps, upload_mbps, ping_ms, jitter_ms) \
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO speedtests \
+             (ts, engine, server, download_mbps, upload_mbps, ping_ms, jitter_ms, \
+              idle_latency_ms, down_latency_ms, bufferbloat_grade) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(s.ts)
         .bind(&s.engine)
@@ -420,6 +423,9 @@ impl Store {
         .bind(s.upload_mbps)
         .bind(s.ping_ms)
         .bind(s.jitter_ms)
+        .bind(s.idle_latency_ms)
+        .bind(s.loaded_latency_ms)
+        .bind(&s.bufferbloat_grade)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -428,7 +434,8 @@ impl Store {
     /// Recent speed-test results, newest first.
     pub async fn speedtest_history(&self, limit: i64) -> Result<Vec<SpeedtestRow>> {
         let rows = sqlx::query_as::<_, SpeedtestRow>(
-            "SELECT ts, engine, server, download_mbps, upload_mbps, ping_ms, jitter_ms \
+            "SELECT ts, engine, server, download_mbps, upload_mbps, ping_ms, jitter_ms, \
+                    idle_latency_ms, down_latency_ms AS loaded_latency_ms, bufferbloat_grade \
              FROM speedtests ORDER BY ts DESC LIMIT ?",
         )
         .bind(limit)
@@ -1031,6 +1038,10 @@ pub struct SpeedtestRow {
     pub upload_mbps: Option<f64>,
     pub ping_ms: Option<f64>,
     pub jitter_ms: Option<f64>,
+    pub idle_latency_ms: Option<f64>,
+    /// Latency under load (stored in the `down_latency_ms` column).
+    pub loaded_latency_ms: Option<f64>,
+    pub bufferbloat_grade: Option<String>,
 }
 
 /// A Wi-Fi link sample (subset of `wifi_samples` we currently populate).
@@ -1397,6 +1408,9 @@ mod tests {
                 upload_mbps: Some(10.2),
                 ping_ms: Some(12.0),
                 jitter_ms: Some(1.4),
+                idle_latency_ms: Some(12.0),
+                loaded_latency_ms: Some(45.0),
+                bufferbloat_grade: Some("B".into()),
             })
             .await
             .unwrap();
@@ -1404,6 +1418,8 @@ mod tests {
         assert_eq!(h.len(), 1);
         assert_eq!(h[0].download_mbps, Some(95.4));
         assert_eq!(h[0].engine.as_deref(), Some("librespeed-cli"));
+        assert_eq!(h[0].loaded_latency_ms, Some(45.0), "loaded latency round-trips from down_latency_ms");
+        assert_eq!(h[0].bufferbloat_grade.as_deref(), Some("B"));
     }
 
     #[tokio::test]

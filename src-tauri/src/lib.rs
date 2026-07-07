@@ -137,9 +137,16 @@ fn resolve_speedtest_bin() -> String {
 #[tauri::command]
 async fn run_speedtest(state: State<'_, AppState>) -> Result<Option<SpeedtestRow>, String> {
     let bin = resolve_speedtest_bin();
-    let result =
-        tracium_probe::run_speedtest_with(&bin, std::time::Duration::from_secs(90)).await;
-    let Some(r) = result else { return Ok(None) };
+    // Run the speed test while probing latency to Cloudflare for a bufferbloat grade.
+    let out = tracium_probe::run_speedtest_bufferbloat(
+        &bin,
+        "1.1.1.1",
+        443,
+        std::time::Duration::from_secs(90),
+    )
+    .await;
+    let Some(r) = out.speed else { return Ok(None) };
+    let bb = out.bufferbloat;
     let row = SpeedtestRow {
         ts: now_ms(),
         engine: Some("librespeed-cli".into()),
@@ -148,6 +155,9 @@ async fn run_speedtest(state: State<'_, AppState>) -> Result<Option<SpeedtestRow
         upload_mbps: r.upload_mbps,
         ping_ms: r.ping_ms,
         jitter_ms: r.jitter_ms,
+        idle_latency_ms: bb.as_ref().map(|b| b.idle_ms),
+        loaded_latency_ms: bb.as_ref().map(|b| b.loaded_ms),
+        bufferbloat_grade: bb.as_ref().map(|b| b.grade.clone()),
     };
     state.store.insert_speedtest(&row).await.map_err(|e| e.to_string())?;
     Ok(Some(row))
