@@ -60,39 +60,45 @@ pub fn check_dot(to: Duration) -> bool {
 pub fn firewall_active() -> Option<bool> {
     #[cfg(target_os = "linux")]
     {
-        // ufw first, then firewalld/nftables via systemctl.
-        if let Some(out) = run("ufw", &["status"]) {
-            return Some(out.to_lowercase().contains("status: active"));
-        }
-        for svc in ["firewalld", "nftables"] {
-            if let Some(out) = run("systemctl", &["is-active", svc]) {
-                if out.trim() == "active" {
+        // `ufw status` requires root, so it's useless for an unprivileged app.
+        // The systemd service state is readable without root and covers the
+        // common firewalls. `systemctl is-active <svc>` prints "active" (exit 0)
+        // or "inactive"/"unknown" (nonzero) — we read stdout regardless of exit.
+        let mut systemctl_ran = false;
+        for svc in ["ufw", "firewalld", "nftables"] {
+            if let Ok(out) = std::process::Command::new("systemctl")
+                .args(["is-active", svc])
+                .output()
+            {
+                systemctl_ran = true;
+                if String::from_utf8_lossy(&out.stdout).trim() == "active" {
                     return Some(true);
                 }
             }
         }
-        Some(false)
+        // systemctl worked but nothing active -> off; systemctl absent -> unknown.
+        if systemctl_ran {
+            Some(false)
+        } else {
+            None
+        }
     }
     #[cfg(target_os = "windows")]
     {
-        // "netsh advfirewall show allprofiles state" lists State ON/OFF lines.
-        let out = run("netsh", &["advfirewall", "show", "allprofiles", "state"])?;
+        // "netsh advfirewall show allprofiles state" lists State ON/OFF lines
+        // and works without admin.
+        let out = std::process::Command::new("netsh")
+            .args(["advfirewall", "show", "allprofiles", "state"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())?;
         Some(out.to_uppercase().contains("STATE") && out.to_uppercase().contains("ON"))
     }
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         None
     }
-}
-
-#[cfg(any(target_os = "linux", target_os = "windows"))]
-fn run(cmd: &str, args: &[&str]) -> Option<String> {
-    std::process::Command::new(cmd)
-        .args(args)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
 /// Common service ports worth reporting when locally listening.
