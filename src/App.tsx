@@ -92,6 +92,11 @@ interface Speedtest {
   bufferbloat_grade: string | null;
 }
 
+interface IspPlan {
+  down_mbps: number;
+  up_mbps: number;
+}
+
 interface RouterInfo {
   descr: string | null;
   name: string | null;
@@ -216,6 +221,18 @@ export default function App() {
   const [speed, setSpeed] = useState<Speedtest | null>(null);
   const [speedRunning, setSpeedRunning] = useState(false);
   const [speedMsg, setSpeedMsg] = useState<string | null>(null);
+  const [ispPlan, setIspPlan] = useState<IspPlan | null>(null);
+  const [planDown, setPlanDown] = useState("");
+  const [planUp, setPlanUp] = useState("");
+
+  const saveIspPlan = () => {
+    const d = parseFloat(planDown);
+    const u = parseFloat(planUp);
+    if (!(d > 0) || !(u > 0)) return;
+    invoke("set_isp_plan", { downMbps: d, upMbps: u })
+      .then(() => setIspPlan({ down_mbps: d, up_mbps: u }))
+      .catch(() => {});
+  };
 
   const runSpeedtest = () => {
     setSpeedRunning(true);
@@ -276,6 +293,15 @@ export default function App() {
       })
       .catch(() => {});
     invoke<Outage[]>("recent_outages", { limit: 20 }).then(setOutages).catch(() => {});
+    invoke<IspPlan | null>("get_isp_plan")
+      .then((p) => {
+        setIspPlan(p);
+        if (p) {
+          setPlanDown(String(p.down_mbps));
+          setPlanUp(String(p.up_mbps));
+        }
+      })
+      .catch(() => {});
   };
 
   const doExport = (kind: "connectivity" | "events") => {
@@ -397,8 +423,24 @@ export default function App() {
         </div>
         {speed && (
           <div className="grid" style={{ marginTop: 12 }}>
-            <Stat label="Download" value={fmtRate((speed.download_mbps ?? 0) * 1e6)} />
-            <Stat label="Upload" value={fmtRate((speed.upload_mbps ?? 0) * 1e6)} />
+            <Stat
+              label="Download"
+              value={fmtRate((speed.download_mbps ?? 0) * 1e6)}
+              hint={
+                ispPlan && speed.download_mbps != null
+                  ? `${((speed.download_mbps / ispPlan.down_mbps) * 100).toFixed(0)}% of ${ispPlan.down_mbps} plan`
+                  : undefined
+              }
+            />
+            <Stat
+              label="Upload"
+              value={fmtRate((speed.upload_mbps ?? 0) * 1e6)}
+              hint={
+                ispPlan && speed.upload_mbps != null
+                  ? `${((speed.upload_mbps / ispPlan.up_mbps) * 100).toFixed(0)}% of ${ispPlan.up_mbps} plan`
+                  : undefined
+              }
+            />
             <Stat label="Ping" value={fmtMs(speed.ping_ms)} />
             <Stat label="Jitter" value={fmtMs(speed.jitter_ms)} />
             {speed.bufferbloat_grade && (
@@ -421,6 +463,29 @@ export default function App() {
           </div>
         )}
         {speedMsg && <p className="status">{speedMsg}</p>}
+        <div className="row" style={{ marginTop: 12 }}>
+          <span className="stat__label" style={{ alignSelf: "center" }}>
+            ISP plan
+            <Info text="Enter your subscribed plan speeds to see what % of them you're actually getting." />
+          </span>
+          <input
+            className="input input--sm"
+            type="number"
+            placeholder="down Mbps"
+            value={planDown}
+            onChange={(e) => setPlanDown(e.target.value)}
+          />
+          <input
+            className="input input--sm"
+            type="number"
+            placeholder="up Mbps"
+            value={planUp}
+            onChange={(e) => setPlanUp(e.target.value)}
+          />
+          <button className="btn" onClick={saveIspPlan} disabled={!planDown || !planUp}>
+            Save
+          </button>
+        </div>
         {speedHistory.length > 1 && (
           <ul className="events" style={{ marginTop: 12 }}>
             {speedHistory.map((s) => (

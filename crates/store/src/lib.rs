@@ -939,6 +939,29 @@ impl Store {
         Ok(v.and_then(|s| s.trim().parse::<i64>().ok()))
     }
 
+    /// Read a settings value as f64.
+    pub async fn get_setting_f64(&self, key: &str) -> Result<Option<f64>> {
+        let v: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = ?")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(v.and_then(|s| s.trim().parse::<f64>().ok()))
+    }
+
+    /// Upsert a settings value (stored verbatim as the JSON-ish `value`).
+    pub async fn set_setting(&self, key: &str, value: &str, now: i64) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        )
+        .bind(key)
+        .bind(value)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Read rollup rows for a metric/bucket since `bucket_ts >= since` (global series).
     pub async fn rollups(&self, metric: &str, bucket: &str, since: i64) -> Result<Vec<Rollup>> {
         let rows = sqlx::query_as::<_, Rollup>(
@@ -1538,6 +1561,15 @@ mod tests {
         assert_eq!(cmp[0].failures, 0);
         assert_eq!(cmp[1].resolver, "8.8.8.8");
         assert_eq!(cmp[1].failures, 1);
+    }
+
+    #[tokio::test]
+    async fn set_and_get_setting_f64() {
+        let store = Store::open_in_memory().await.unwrap();
+        assert!(store.get_setting_f64("isp.plan_down_mbps").await.unwrap().is_none());
+        store.set_setting("isp.plan_down_mbps", "300", 0).await.unwrap();
+        store.set_setting("isp.plan_down_mbps", "500.5", 1).await.unwrap(); // upsert
+        assert_eq!(store.get_setting_f64("isp.plan_down_mbps").await.unwrap(), Some(500.5));
     }
 
     #[tokio::test]

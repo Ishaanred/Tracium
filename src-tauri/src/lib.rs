@@ -163,6 +163,39 @@ async fn run_speedtest(state: State<'_, AppState>) -> Result<Option<SpeedtestRow
     Ok(Some(row))
 }
 
+/// The user's declared ISP plan (down/up Mbps), if set.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct IspPlan {
+    down_mbps: f64,
+    up_mbps: f64,
+}
+
+#[tauri::command]
+async fn get_isp_plan(state: State<'_, AppState>) -> Result<Option<IspPlan>, String> {
+    let down = state.store.get_setting_f64("isp.plan_down_mbps").await.map_err(|e| e.to_string())?;
+    let up = state.store.get_setting_f64("isp.plan_up_mbps").await.map_err(|e| e.to_string())?;
+    Ok(match (down, up) {
+        (Some(d), Some(u)) => Some(IspPlan { down_mbps: d, up_mbps: u }),
+        _ => None,
+    })
+}
+
+#[tauri::command]
+async fn set_isp_plan(state: State<'_, AppState>, down_mbps: f64, up_mbps: f64) -> Result<(), String> {
+    let now = now_ms();
+    state
+        .store
+        .set_setting("isp.plan_down_mbps", &down_mbps.to_string(), now)
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .store
+        .set_setting("isp.plan_up_mbps", &up_mbps.to_string(), now)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Recent speed-test results.
 #[tauri::command]
 async fn speedtest_history(
@@ -334,6 +367,8 @@ pub fn run() {
             router_status,
             run_speedtest,
             speedtest_history,
+            get_isp_plan,
+            set_isp_plan,
             recent_events,
             recent_outages,
             export_csv
