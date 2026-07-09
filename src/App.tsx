@@ -33,6 +33,7 @@ interface StatusUpdate {
 
 interface Rollup {
   bucket_ts: number;
+  count: number;
   min: number | null;
   avg: number | null;
   max: number | null;
@@ -193,6 +194,20 @@ function fmtBytes(b: number | null | undefined): string {
   if (gb >= 1) return `${gb.toFixed(2)} GB`;
   return `${(b / 1e6).toFixed(1)} MB`;
 }
+/** Average a metric's hourly rollups by LOCAL hour-of-day (0–23). */
+function byHourOfDay(rows: Rollup[]): (number | null)[] {
+  const sum = Array(24).fill(0);
+  const cnt = Array(24).fill(0);
+  for (const r of rows) {
+    if (r.avg == null) continue;
+    const h = new Date(r.bucket_ts).getHours();
+    const w = r.count || 1;
+    sum[h] += r.avg * w;
+    cnt[h] += w;
+  }
+  return sum.map((s, i) => (cnt[i] ? s / cnt[i] : null));
+}
+
 function fmtDur(ms: number | null | undefined): string {
   if (ms == null) return "ongoing";
   const s = ms / 1000;
@@ -208,6 +223,7 @@ export default function App() {
   const [history, setHistory] = useState<Rollup[]>([]);
   const [trendMetric, setTrendMetric] = useState<"latency" | "loss" | "jitter">("latency");
   const [trendRange, setTrendRange] = useState<"24h" | "7d" | "30d">("24h");
+  const [peak, setPeak] = useState<(number | null)[]>([]);
   const [targetStatus, setTargetStatus] = useState<TargetStatus[]>([]);
   const [events, setEvents] = useState<NetEvent[]>([]);
   const [outages, setOutages] = useState<Outage[]>([]);
@@ -307,6 +323,9 @@ export default function App() {
     })
       .then(setHistory)
       .catch(() => {});
+    invoke<Rollup[]>("metric_history", { metric: "latency", bucket: "hour", windowSecs: 7 * DAY_SECS })
+      .then((rows) => setPeak(byHourOfDay(rows)))
+      .catch(() => {});
     invoke<TargetStatus[]>("target_status").then(setTargetStatus).catch(() => {});
     invoke<NetEvent[]>("recent_events", { limit: 20 }).then(setEvents).catch(() => {});
     invoke<DnsStat[]>("dns_comparison", { windowSecs: DAY_SECS }).then(setDns).catch(() => {});
@@ -377,6 +396,12 @@ export default function App() {
   }, [trendMetric, trendRange]);
 
   const online = status?.online ?? null;
+  const peakVals = peak
+    .map((v, h) => ({ h, v }))
+    .filter((x): x is { h: number; v: number } => x.v != null);
+  const peakMax = peakVals.length ? Math.max(...peakVals.map((x) => x.v)) : 0;
+  const peakHour = peakVals.length ? peakVals.reduce((a, b) => (b.v > a.v ? b : a)) : null;
+  const offHour = peakVals.length ? peakVals.reduce((a, b) => (b.v < a.v ? b : a)) : null;
   const trendUnit = trendMetric === "loss" ? "%" : " ms";
   const fmtTrend = (v: number | null | undefined) =>
     v == null ? "—" : `${v.toFixed(trendMetric === "loss" ? 1 : 0)}${trendUnit}`;
@@ -644,6 +669,41 @@ export default function App() {
           </p>
         )}
       </section>
+
+      {peakVals.length > 3 && (
+        <section className="card">
+          <CardTitle
+            title="Latency by hour of day (7d)"
+            info="Average latency for each hour of the day over the last week (your local time). Tall/red bars are peak hours — when your neighbourhood saturates the node and latency climbs."
+          />
+          <div className="hours">
+            {peak.map((v, h) => (
+              <div
+                key={h}
+                className="hours__bar"
+                title={`${String(h).padStart(2, "0")}:00 — ${v != null ? `${v.toFixed(0)} ms` : "no data"}`}
+              >
+                <div
+                  className="hours__fill"
+                  style={{
+                    height: v != null && peakMax ? `${Math.max(4, (v / peakMax) * 100)}%` : "0%",
+                    background: peakHour && h === peakHour.h ? "var(--bad)" : "var(--accent)",
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="hours__axis">
+            <span>0</span><span>6</span><span>12</span><span>18</span><span>23</span>
+          </div>
+          {peakHour && offHour && (
+            <p className="status" style={{ marginTop: 8, fontSize: 12 }}>
+              peak ~{String(peakHour.h).padStart(2, "0")}:00 ({peakHour.v.toFixed(0)} ms) · off-peak ~
+              {String(offHour.h).padStart(2, "0")}:00 ({offHour.v.toFixed(0)} ms)
+            </p>
+          )}
+        </section>
+      )}
 
       <section className="card">
         <h2>Last 24 hours</h2>
