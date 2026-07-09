@@ -121,6 +121,13 @@ interface Gateway {
   lan_loss_pct: number | null;
 }
 
+interface IfErrors {
+  rx_errors: number | null;
+  rx_drops: number | null;
+  tx_errors: number | null;
+  tx_drops: number | null;
+}
+
 interface LanDevice {
   id: number;
   mac: string | null;
@@ -240,6 +247,7 @@ export default function App() {
   const [trace, setTrace] = useState<Traceroute | null>(null);
   const [devices, setDevices] = useState<LanDevice[]>([]);
   const [gateway, setGateway] = useState<Gateway | null>(null);
+  const [ifErrors, setIfErrors] = useState<IfErrors | null>(null);
   const [wifi, setWifi] = useState<Wifi | null>(null);
   const [targets, setTargets] = useState<Target[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -342,6 +350,7 @@ export default function App() {
     invoke<Traceroute | null>("latest_traceroute").then(setTrace).catch(() => {});
     invoke<LanDevice[]>("devices").then(setDevices).catch(() => {});
     invoke<Gateway | null>("gateway_status").then(setGateway).catch(() => {});
+    invoke<IfErrors | null>("interface_errors").then(setIfErrors).catch(() => {});
     invoke<Wifi | null>("wifi").then(setWifi).catch(() => {});
     invoke<Speedtest[]>("speedtest_history", { limit: 10 })
       .then((h) => {
@@ -865,6 +874,14 @@ export default function App() {
           <div className="grid">
             <Stat label="Gateway latency" value={fmtMs(gateway.gateway_rtt_ms)} />
             <Stat label="LAN packet loss" value={fmtPct(gateway.lan_loss_pct)} />
+            {ifErrors && (
+              <Stat
+                label="NIC errors / drops"
+                value={`${(ifErrors.rx_errors ?? 0) + (ifErrors.tx_errors ?? 0)} / ${(ifErrors.rx_drops ?? 0) + (ifErrors.tx_drops ?? 0)}`}
+                hint="since boot"
+                info="Low-level network-card errors and dropped packets since boot (across all interfaces). Normally 0 — non-zero suggests cabling, driver, or saturation issues."
+              />
+            )}
           </div>
         </section>
       )}

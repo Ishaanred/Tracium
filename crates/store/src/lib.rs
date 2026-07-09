@@ -397,6 +397,40 @@ impl Store {
         Ok(())
     }
 
+    /// Record aggregate NIC error/drop counters (row tagged `iface='errors'`).
+    pub async fn insert_interface_errors(
+        &self,
+        ts: i64,
+        rx_errors: i64,
+        rx_drops: i64,
+        tx_errors: i64,
+        tx_drops: i64,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO interface_samples (ts, iface, rx_errors, rx_drops, tx_errors, tx_drops) \
+             VALUES (?, 'errors', ?, ?, ?, ?)",
+        )
+        .bind(ts)
+        .bind(rx_errors)
+        .bind(rx_drops)
+        .bind(tx_errors)
+        .bind(tx_drops)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// The latest NIC error/drop totals, if any.
+    pub async fn latest_interface_errors(&self) -> Result<Option<InterfaceErrorsRow>> {
+        let row = sqlx::query_as::<_, InterfaceErrorsRow>(
+            "SELECT ts, rx_errors, rx_drops, tx_errors, tx_drops FROM interface_samples \
+             WHERE iface = 'errors' ORDER BY ts DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     /// The latest gateway (LAN) sample, if any.
     pub async fn latest_gateway(&self) -> Result<Option<GatewaySample>> {
         let row = sqlx::query_as::<_, GatewaySample>(
@@ -1170,6 +1204,16 @@ pub struct SecuritySnapshot {
     pub open_ports: Option<String>,
 }
 
+/// Latest NIC error/drop totals.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct InterfaceErrorsRow {
+    pub ts: i64,
+    pub rx_errors: Option<i64>,
+    pub rx_drops: Option<i64>,
+    pub tx_errors: Option<i64>,
+    pub tx_drops: Option<i64>,
+}
+
 /// Latest gateway (LAN) ping sample.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct GatewaySample {
@@ -1418,6 +1462,18 @@ mod tests {
         store.seed_default_targets(0).await.unwrap();
         let targets = store.list_targets().await.unwrap();
         assert_eq!(targets.len(), 3, "seeding twice should not duplicate");
+    }
+
+    #[tokio::test]
+    async fn interface_errors_roundtrip() {
+        let store = Store::open_in_memory().await.unwrap();
+        assert!(store.latest_interface_errors().await.unwrap().is_none());
+        store.insert_interface_errors(100, 3, 3, 4, 6).await.unwrap();
+        let e = store.latest_interface_errors().await.unwrap().unwrap();
+        assert_eq!(e.rx_errors, Some(3));
+        assert_eq!(e.tx_drops, Some(6));
+        // error rows carry no bytes -> don't skew bandwidth totals
+        assert_eq!(store.bandwidth_totals(0).await.unwrap().rx_bytes, 0);
     }
 
     #[tokio::test]

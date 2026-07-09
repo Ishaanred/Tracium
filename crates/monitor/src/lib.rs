@@ -16,8 +16,8 @@ use tracium_probe::security::{
     COMMON_PORTS,
 };
 use tracium_probe::{
-    default_gateway_ip, discover_devices, dns_lookup, get_wifi, ping, probe, public_ip, traceroute,
-    BandwidthSampler, ProbeConfig,
+    default_gateway_ip, discover_devices, dns_lookup, get_wifi, interface_errors, ping, probe,
+    public_ip, traceroute, BandwidthSampler, ProbeConfig,
 };
 use tracium_store::{
     NewConnectivitySample, SecuritySnapshot, Store, StoreError, TracerouteHop, WifiSample,
@@ -455,6 +455,16 @@ impl Monitor {
             // Gateway/LAN ping every cycle (local, fast).
             if let Err(e) = self.sample_gateway(now).await {
                 eprintln!("tracium gateway sample failed: {e}");
+            }
+            // NIC error/drop counters (cheap /proc read).
+            if let Some(er) = interface_errors() {
+                if let Err(e) = self
+                    .store
+                    .insert_interface_errors(now, er.rx_errors, er.rx_drops, er.tx_errors, er.tx_drops)
+                    .await
+                {
+                    eprintln!("tracium interface-errors sample failed: {e}");
+                }
             }
             if now - last_dns >= dns_ms {
                 if let Err(e) = self.sample_dns(now).await {
