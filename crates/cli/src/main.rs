@@ -33,6 +33,11 @@ enum Cmd {
     Run,
     /// Current reachability per target, gateway, and public IP.
     Status,
+    /// Live terminal dashboard — refreshes in place (read-only, Ctrl-C to quit).
+    Watch {
+        #[arg(long, default_value_t = 2.0)]
+        interval: f64,
+    },
     /// Reliability + QoE over a window (e.g. 24h, 7d, 30d).
     Report {
         #[arg(long, default_value = "24h")]
@@ -94,6 +99,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Monitor::new(store, MonitorConfig::default()).run(None).await;
         }
         Cmd::Status => status(&store, j).await?,
+        Cmd::Watch { interval } => watch(&store, interval).await?,
         Cmd::Report { window } => report(&store, window_secs(&window), j).await?,
         Cmd::Dns { window } => dns(&store, window_secs(&window), j).await?,
         Cmd::Wifi => opt(j, &store.latest_wifi().await?, "not connected to Wi-Fi"),
@@ -221,6 +227,70 @@ async fn status(store: &Store, json: bool) -> Result<(), Box<dyn Error>> {
     }
     if let Some(ip) = public_ip {
         println!("Public IP: {ip}");
+    }
+    Ok(())
+}
+
+/// Live in-place dashboard. Read-only, so it runs happily alongside the daemon.
+async fn watch(store: &Store, interval: f64) -> Result<(), Box<dyn Error>> {
+    use std::io::Write;
+    let dur = Duration::from_secs_f64(interval.max(0.5));
+    let f = |v: Option<f64>, u: &str| v.map(|x| format!("{x:.1}{u}")).unwrap_or_else(|| "—".into());
+    loop {
+        let targets = store.latest_per_target().await?;
+        let gateway = store.latest_gateway().await?;
+        let h1 = store.reliability_since(now_ms() - 3_600_000).await?;
+        let d1 = store.reliability_since(now_ms() - 86_400_000).await?;
+        let qoe = store.qoe_average_since(now_ms() - 1_800_000).await?;
+        let up = targets.iter().filter(|t| t.up == Some(true)).count();
+        let online = up > 0;
+
+        let mut buf = String::new();
+        buf.push_str("\x1b[2J\x1b[H"); // clear screen + cursor home
+        buf.push_str(&format!("Tracium — live · refresh {interval:.0}s · Ctrl-C to quit\n\n"));
+        buf.push_str(&format!(
+            "  {}   {}/{} targets up\n",
+            if online { "● ONLINE " } else { "○ OFFLINE" },
+            up,
+            targets.len()
+        ));
+        for t in &targets {
+            let state = match t.up {
+                Some(true) => format!("{:.1} ms", t.rtt_avg.unwrap_or(0.0)),
+                Some(false) => "down".to_string(),
+                None => "—".to_string(),
+            };
+            buf.push_str(&format!("    {:14} {:24} {}\n", t.label, t.host, state));
+        }
+        if let Some(g) = gateway {
+            buf.push_str(&format!(
+                "  gateway: {} · loss {}\n",
+                g.gateway_rtt_ms.map(|v| format!("{v:.2} ms")).unwrap_or_else(|| "—".into()),
+                g.lan_loss_pct.map(|v| format!("{v:.0}%")).unwrap_or_else(|| "—".into()),
+            ));
+        }
+        buf.push_str(&format!(
+            "\n  last 1h : uptime {:.1}%  lat {}  loss {}\n",
+            h1.uptime_pct, f(h1.avg_latency_ms, " ms"), f(h1.avg_loss_pct, "%"),
+        ));
+        buf.push_str(&format!(
+            "  last 24h: uptime {:.1}%  lat {}  loss {}  disconnects {}\n",
+            d1.uptime_pct, f(d1.avg_latency_ms, " ms"), f(d1.avg_loss_pct, "%"), d1.disconnects,
+        ));
+        if let Some(q) = qoe {
+            let g = |v: Option<f64>| v.map(|x| format!("{x:.0}")).unwrap_or_else(|| "—".into());
+            buf.push_str(&format!(
+                "  QoE(30m): gaming {} · voip {} · video {} · streaming {} · web {}\n",
+                g(q.gaming), g(q.voip), g(q.video_call), g(q.streaming), g(q.web),
+            ));
+        }
+        print!("{buf}");
+        std::io::stdout().flush().ok();
+
+        tokio::select! {
+            _ = tokio::time::sleep(dur) => {}
+            _ = tokio::signal::ctrl_c() => { println!(); break; }
+        }
     }
     Ok(())
 }
