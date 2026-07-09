@@ -1,6 +1,7 @@
 # Rust
 /target
 **/target
+/.build-tmp
 
 # Node
 node_modules

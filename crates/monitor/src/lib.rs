@@ -11,7 +11,10 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tracium_probe::security::{check_doh, check_dot, detect_vpn, firewall_active, scan_local_ports, COMMON_PORTS};
+use tracium_probe::security::{
+    check_doh, check_dot, detect_nat, detect_upnp, detect_vpn, firewall_active, scan_local_ports,
+    COMMON_PORTS,
+};
 use tracium_probe::{
     default_gateway_ip, discover_devices, dns_lookup, get_wifi, ping, probe, public_ip, traceroute,
     BandwidthSampler, ProbeConfig,
@@ -330,13 +333,15 @@ impl Monitor {
         let dot = tokio::task::spawn_blocking(move || check_dot(to)).await.unwrap_or(false);
         let firewall = tokio::task::spawn_blocking(firewall_active).await.unwrap_or(None);
         let vpn = tokio::task::spawn_blocking(detect_vpn).await.ok();
+        let nat = tokio::task::spawn_blocking(move || detect_nat(to)).await.unwrap_or(None);
+        let upnp = detect_upnp(to).await;
         let open = scan_local_ports(COMMON_PORTS, Duration::from_millis(200)).await;
 
         let snapshot = SecuritySnapshot {
             ts: now,
             public_ip: self.store.latest_public_ip().await?,
-            nat_type: None,       // STUN classification: future
-            upnp_enabled: None,   // IGD discovery: future
+            nat_type: nat,
+            upnp_enabled: upnp,
             firewall_active: firewall,
             vpn_detected: vpn.map(|v| v.active),
             doh_active: Some(doh),

@@ -56,6 +56,53 @@ pub fn check_dot(to: Duration) -> bool {
     std::net::TcpStream::connect_timeout(&addr, to).is_ok()
 }
 
+/// Best-effort NAT type via STUN — a passive check (no changes made). Queries
+/// two public STUN servers from one socket and compares the mapped address:
+/// a stable mapping = cone NAT ("moderate", or "open" if the port is preserved),
+/// a changing mapping = symmetric NAT ("strict"). `None`/"blocked" if STUN can't
+/// be reached. Full RFC5780 classification (inbound reachability) isn't attempted.
+pub fn detect_nat(timeout: Duration) -> Option<String> {
+    use std::net::{ToSocketAddrs, UdpSocket};
+    use stunclient::StunClient;
+
+    let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.set_read_timeout(Some(timeout)).ok()?;
+    let local_port = sock.local_addr().ok()?.port();
+
+    let servers = ["stun.l.google.com:19302", "stun.cloudflare.com:3478"];
+    let mut mapped = Vec::new();
+    for s in servers {
+        if let Some(addr) = s.to_socket_addrs().ok().and_then(|mut a| a.find(|a| a.is_ipv4())) {
+            if let Ok(ext) = StunClient::new(addr).query_external_address(&sock) {
+                mapped.push(ext);
+            }
+        }
+    }
+
+    Some(match mapped.as_slice() {
+        [] => "blocked".to_string(),
+        [_] => "unknown".to_string(),
+        [a, b, ..] => {
+            if a == b {
+                if a.port() == local_port { "open".into() } else { "moderate".into() }
+            } else {
+                "strict".into()
+            }
+        }
+    })
+}
+
+/// Is UPnP/IGD advertised by the gateway? A passive discovery — `Some(true)` if a
+/// gateway responds, `Some(false)` if none (UPnP off/absent).
+pub async fn detect_upnp(timeout: Duration) -> Option<bool> {
+    match tokio::time::timeout(timeout, igd_next::aio::tokio::search_gateway(Default::default())).await
+    {
+        Ok(Ok(_gw)) => Some(true),
+        Ok(Err(_)) => Some(false),
+        Err(_) => Some(false),
+    }
+}
+
 /// Best-effort firewall status via native CLIs. `None` = couldn't determine.
 pub fn firewall_active() -> Option<bool> {
     #[cfg(target_os = "linux")]
@@ -150,6 +197,15 @@ mod tests {
         drop(listener);
         let open = scan_local_ports(&[port], Duration::from_millis(200)).await;
         assert!(open.is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "hits the network; run with --ignored"]
+    async fn real_nat_and_upnp() {
+        let nat = detect_nat(Duration::from_secs(3));
+        let upnp = detect_upnp(Duration::from_secs(3)).await;
+        println!("nat: {nat:?}  upnp: {upnp:?}");
+        assert!(nat.is_some());
     }
 
     #[test]

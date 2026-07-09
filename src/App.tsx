@@ -78,6 +78,8 @@ interface Security {
   vpn_detected: boolean | null;
   doh_active: boolean | null;
   dot_active: boolean | null;
+  nat_type: string | null;
+  upnp_enabled: boolean | null;
   open_ports: string | null;
 }
 
@@ -761,6 +763,18 @@ export default function App() {
               goodWhenTrue={false}
               neutral
               info="Whether a VPN/tunnel interface (wg, tun, tap…) is currently active."
+            />
+            <Stat
+              label="NAT type"
+              value={security.nat_type ?? "—"}
+              info="How your router maps outbound connections (via STUN). Open/Moderate are fine; Strict (symmetric NAT) can hurt P2P, gaming and calls. 'blocked' = STUN/UDP couldn't get out."
+            />
+            <Flag
+              label="UPnP"
+              value={security.upnp_enabled}
+              goodWhenTrue={false}
+              neutral
+              info="Whether the router advertises UPnP/IGD (lets apps auto-open ports). Convenient, but a mild security exposure if you don't need it."
             />
             <Stat
               label="Open ports"
