@@ -52,6 +52,19 @@ jobs:
           releaseName: "Tracium ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: false
+          releaseBody: |
+            Tracium — a lightweight desktop + headless network monitor.
+
+            **Linux is the supported platform.** Windows builds are attached as
+            an experimental preview (not yet tested — see the Windows-testing issue).
+
+            Downloads:
+            - Desktop app (tray GUI): `.deb` / `.AppImage`
+            - Headless daemon: `traciumd-Linux-x86_64` (run it as a systemd user
+              service — see packaging/systemd/tracium.service)
+
+            The `.deb` pulls in `traceroute`, `iw`, and `iputils-ping`. The
+            speed-test engine (librespeed-cli) is bundled.
 
   daemon:
     strategy:

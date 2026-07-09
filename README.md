@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0891b2?style=flat-square" alt="Platforms" />
+  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20(experimental)-0891b2?style=flat-square" alt="Platforms" />
   <img src="https://img.shields.io/badge/status-private-inactive?style=flat-square" alt="Status" />
   <img src="https://img.shields.io/badge/license-MIT-0891b2?style=flat-square" alt="License: MIT" />
 </p>
@@ -185,7 +185,7 @@ Tracium takes cues from tools that feel invisible until you need them — clean,
 - **Seamless** — Lives in your system tray. One click to expand.
 - **Lightweight** — Idles at near-zero CPU. Does its work, gets out of the way.
 - **Honest** — Raw numbers when you want them. Simple scores when you don't.
-- **Cross-Platform** — Windows and Linux. Same experience. Same codebase.
+- **Cross-Platform** — one codebase for Linux and Windows. Linux is supported today; Windows is experimental (untested) for now.
 
 ### Footprint (measured)
 
@@ -216,8 +216,9 @@ Every dependency will be transparently credited. Good open source deserves recog
 
 ## Install & Run
 
-> Prebuilt downloads (`.deb` / `.AppImage` / `.msi` + a `traciumd` binary) are
-> planned via GitHub Releases. For now, build from source.
+> **Linux is the supported platform today** (`.deb` / `.AppImage` + a `traciumd`
+> daemon binary, via GitHub Releases). Windows builds are produced but
+> **experimental / not yet tested** — treat them as preview. Or build from source.
 
 **Prerequisites:** Rust (stable), Node 18+ with pnpm. On Linux the desktop app
 also needs the WebKitGTK libraries — see [`docs/development.md`](docs/development.md).
