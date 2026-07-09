@@ -162,20 +162,19 @@ Everything above, tracked over time. Not just snapshots — stories.
 
 ---
 
-## AI Insights
+## Bring your own AI
 
-Tracium doesn't just collect data — it connects dots.
+Tracium deliberately doesn't bundle an AI model or opinionated "insights" engine.
+Instead it makes your data easy to hand to whatever assistant you already use:
 
-- **ISP Congestion Detection** — Is your ISP oversubscribed in your area?
-- **Wi-Fi Congestion Detection** — Too many networks on the same channel?
-- **DNS Issue Detection** — Is your resolver the bottleneck?
-- **Bufferbloat Detection** — Automatic, no manual test required.
-- **Device Saturation Detection** — That one device crushing your network.
-- **Automatic Root Cause Analysis** — "Your latency spiked because..."
-- **Performance Trend Analysis** — Is your connection getting worse over time?
-- **Personalized Recommendations** — "Try channel 149" — specific, actionable, correct.
+- **Export** a summary as **PDF** (`traciumd report --pdf`) or the raw history as
+  **CSV** (`traciumd export`), then paste it into ChatGPT/Claude/etc. and ask
+  "what's wrong with my connection and how do I fix it?"
+- Your data stays on your machine until *you* choose to share it — no telemetry,
+  no cloud, no bundled model deciding what matters.
 
-All of this runs locally. Your network data stays on your machine.
+This keeps Tracium lean and private, and lets the analysis improve as the AI you
+prefer improves — without us shipping (and maintaining) a model.
 
 ---
 
