@@ -300,17 +300,34 @@ impl Monitor {
         };
 
         let previous = self.store.last_route_hash(target).await?;
-        let hops: Vec<TracerouteHop> = trace
-            .hops
-            .iter()
-            .map(|h| TracerouteHop {
+
+        // Resolve AS info per hop via Team Cymru, deduping repeated IPs.
+        let mut asn_cache: std::collections::HashMap<String, Option<(String, Option<String>)>> =
+            std::collections::HashMap::new();
+        let mut hops: Vec<TracerouteHop> = Vec::with_capacity(trace.hops.len());
+        for h in &trace.hops {
+            let (asn, as_name) = match &h.ip {
+                Some(ip) => {
+                    if !asn_cache.contains_key(ip) {
+                        asn_cache.insert(ip.clone(), tracium_probe::lookup_asn(ip).await);
+                    }
+                    match asn_cache.get(ip).and_then(|o| o.clone()) {
+                        Some((a, n)) => (Some(a), n),
+                        None => (None, None),
+                    }
+                }
+                None => (None, None),
+            };
+            hops.push(TracerouteHop {
                 hop_no: h.hop_no as i64,
                 ip: h.ip.clone(),
                 hostname: None,
                 rtt_ms: h.rtt_ms,
                 loss_pct: h.loss_pct,
-            })
-            .collect();
+                asn,
+                as_name,
+            });
+        }
         self.store.save_traceroute(now, target, &trace.route_hash, &hops).await?;
 
         if let Some(prev) = previous {

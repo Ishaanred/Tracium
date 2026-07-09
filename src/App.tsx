@@ -133,6 +133,7 @@ interface TraceHop {
   ip: string | null;
   rtt_ms: number | null;
   loss_pct: number | null;
+  as_name: string | null;
 }
 interface Traceroute {
   target: string;
@@ -891,7 +892,7 @@ export default function App() {
       <section className="card">
         <h2>
           Route{trace ? ` to ${trace.target} · ${trace.hop_count} hops` : ""}
-          <Info text="The path your packets take to reach the target, hop by hop, with round-trip time and packet loss at each hop (5 probes/hop). Loss that starts at a hop and continues points to where the trouble is." />
+          <Info text="The path your packets take to reach the target, hop by hop: the network (AS) each hop belongs to, round-trip time, and packet loss (5 probes/hop). Loss that starts at a hop and continues points to where the trouble is; the AS shows which ISP/provider carries each leg." />
         </h2>
         {trace && trace.hops.length > 0 ? (
           <ul className="hops">
@@ -899,6 +900,7 @@ export default function App() {
               <li key={h.hop_no}>
                 <span className="hops__no">{h.hop_no}</span>
                 <span className="hops__ip">{h.ip ?? "* (no reply)"}</span>
+                {h.as_name && <span className="hops__as">{h.as_name.split(/[-,]/)[0].trim()}</span>}
                 {h.loss_pct != null && h.loss_pct > 0 && (
                   <span className="hops__loss" style={{ color: h.loss_pct >= 50 ? "var(--bad)" : "#fbbf24" }}>
                     {h.loss_pct.toFixed(0)}% loss

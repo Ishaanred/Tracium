@@ -281,6 +281,14 @@ body {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
+.hops__as {
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .events li {
   display: flex;
   align-items: center;
