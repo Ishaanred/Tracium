@@ -174,6 +174,8 @@ impl Store {
             ("retention.raw_days", "7"),
             ("rollups.global_enabled", "true"),
             ("rollups.per_target_enabled", "false"),
+            // Off by default: reading resolvectl can trigger a polkit prompt.
+            ("dns.cache_stats", "0"),
         ];
         for (k, v) in defaults {
             sqlx::query(
@@ -1691,7 +1693,7 @@ mod tests {
             .fetch_one(store.pool())
             .await
             .unwrap();
-        assert_eq!(n, 3);
+        assert_eq!(n, 4);
         let raw_days: String =
             sqlx::query_scalar("SELECT value FROM settings WHERE key = 'retention.raw_days'")
                 .fetch_one(store.pool())

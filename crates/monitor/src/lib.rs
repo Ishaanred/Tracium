@@ -220,9 +220,12 @@ impl Monitor {
                 .await?;
         }
 
-        // Cache hit rate (Linux/systemd-resolved only): store cumulative counters
-        // and derive the recent hit rate from the delta since the last sample.
-        if let Some(cur) = dns_cache_stats() {
+        // Cache hit rate (Linux/systemd-resolved only). OFF BY DEFAULT: reading
+        // `resolvectl statistics` can trigger a polkit auth prompt on some
+        // systems, so we only collect it when the user opts in via the
+        // `dns.cache_stats` setting (=1). Otherwise we never shell out to it.
+        let cache_stats_on = self.store.get_setting_i64("dns.cache_stats").await?.unwrap_or(0) == 1;
+        if let Some(cur) = cache_stats_on.then(dns_cache_stats).flatten() {
             let prev_h = self.store.get_setting_f64("dns.cache_hits").await?;
             let prev_m = self.store.get_setting_f64("dns.cache_misses").await?;
             if let (Some(ph), Some(pm)) = (prev_h, prev_m) {
