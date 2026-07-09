@@ -18,4 +18,5 @@ tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+printpdf = "0.7"
 dirs = "5"

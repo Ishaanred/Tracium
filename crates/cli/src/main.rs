@@ -42,6 +42,9 @@ enum Cmd {
     Report {
         #[arg(long, default_value = "24h")]
         window: String,
+        /// Write a PDF report to this path instead of printing.
+        #[arg(long)]
+        pdf: Option<PathBuf>,
     },
     /// DNS resolver comparison over a window.
     Dns {
@@ -100,7 +103,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         Cmd::Status => status(&store, j).await?,
         Cmd::Watch { interval } => watch(&store, interval).await?,
-        Cmd::Report { window } => report(&store, window_secs(&window), j).await?,
+        Cmd::Report { window, pdf } => report(&store, window_secs(&window), j, pdf).await?,
         Cmd::Dns { window } => dns(&store, window_secs(&window), j).await?,
         Cmd::Wifi => opt(j, &store.latest_wifi().await?, "not connected to Wi-Fi"),
         Cmd::Security => opt(j, &store.latest_security().await?, "no security snapshot yet"),
@@ -295,9 +298,22 @@ async fn watch(store: &Store, interval: f64) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn report(store: &Store, since_secs: i64, json: bool) -> Result<(), Box<dyn Error>> {
-    let r = store.reliability_since(now_ms() - since_secs * 1000).await?;
+async fn report(
+    store: &Store,
+    since_secs: i64,
+    json: bool,
+    pdf: Option<PathBuf>,
+) -> Result<(), Box<dyn Error>> {
+    let since = now_ms() - since_secs * 1000;
+    let r = store.reliability_since(since).await?;
     let q = store.qoe_average_since(now_ms() - 1_800_000).await?;
+    if let Some(path) = pdf {
+        let dns = store.dns_comparison(since).await?;
+        let outages = store.recent_outages(15).await?;
+        write_report_pdf(&path, since_secs, &r, &q, &dns, &outages)?;
+        println!("wrote report to {}", path.display());
+        return Ok(());
+    }
     if json {
         print_json(&serde_json::json!({ "window_secs": since_secs, "reliability": r, "qoe": q }));
         return Ok(());
@@ -423,6 +439,83 @@ async fn speed(store: &Store, json: bool) -> Result<(), Box<dyn Error>> {
     if let Some(s) = r.server {
         println!("server: {s}");
     }
+    Ok(())
+}
+
+/// Render a one-page summary PDF using printpdf's built-in Helvetica (no font
+/// asset needed). Text/table only — charts are a future enhancement.
+fn write_report_pdf(
+    path: &std::path::Path,
+    since_secs: i64,
+    r: &tracium_store::Reliability,
+    q: &Option<tracium_store::QoeAverage>,
+    dns: &[tracium_store::DnsResolverStat],
+    outages: &[tracium_store::Outage],
+) -> Result<(), Box<dyn Error>> {
+    use printpdf::{BuiltinFont, Mm, PdfDocument};
+    use std::io::BufWriter;
+
+    let (doc, page, layer) = PdfDocument::new("Tracium Network Report", Mm(210.0), Mm(297.0), "Layer 1");
+    let reg = doc.add_builtin_font(BuiltinFont::Helvetica)?;
+    let bold = doc.add_builtin_font(BuiltinFont::HelveticaBold)?;
+    let l = doc.get_page(page).get_layer(layer);
+
+    let mut y = 280.0_f64;
+    let mut text = |s: &str, size: f64, b: bool, indent: f64, gap: f64| {
+        l.use_text(s, size as f32, Mm((18.0 + indent) as f32), Mm(y as f32), if b { &bold } else { &reg });
+        y -= gap;
+    };
+    let f = |v: Option<f64>, u: &str| v.map(|x| format!("{x:.1}{u}")).unwrap_or_else(|| "—".into());
+
+    text("Tracium — Network Report", 20.0, true, 0.0, 10.0);
+    text(&format!("Range: last {}", human(since_secs)), 11.0, false, 0.0, 12.0);
+
+    text("Reliability", 14.0, true, 0.0, 7.0);
+    text(&format!("Uptime: {:.1}%  ({} of {} cycles)", r.uptime_pct, r.up_samples, r.samples), 11.0, false, 4.0, 6.0);
+    text(&format!("Avg latency: {}", f(r.avg_latency_ms, " ms")), 11.0, false, 4.0, 6.0);
+    text(&format!("Avg jitter: {}", f(r.avg_jitter_ms, " ms")), 11.0, false, 4.0, 6.0);
+    text(&format!("Avg packet loss: {}", f(r.avg_loss_pct, "%")), 11.0, false, 4.0, 6.0);
+    text(&format!("Disconnects: {}", r.disconnects), 11.0, false, 4.0, 12.0);
+
+    if let Some(q) = q {
+        let g = |v: Option<f64>| v.map(|x| format!("{x:.0}")).unwrap_or_else(|| "—".into());
+        text("Quality of experience (recent)", 14.0, true, 0.0, 7.0);
+        text(
+            &format!("Gaming {} · VoIP {} · Video {} · Streaming {} · Web {}",
+                g(q.gaming), g(q.voip), g(q.video_call), g(q.streaming), g(q.web)),
+            11.0, false, 4.0, 12.0,
+        );
+    }
+
+    if !dns.is_empty() {
+        text("DNS resolvers", 14.0, true, 0.0, 7.0);
+        for d in dns {
+            text(
+                &format!("{:16} {:>8}  {} lookups, {} failures",
+                    d.resolver, d.avg_ms.map(|v| format!("{v:.1}ms")).unwrap_or_else(|| "—".into()), d.count, d.failures),
+                10.0, false, 4.0, 6.0,
+            );
+        }
+        text("", 10.0, false, 0.0, 6.0);
+    }
+
+    text("Incidents", 14.0, true, 0.0, 7.0);
+    if outages.is_empty() {
+        text("No outages recorded.", 11.0, false, 4.0, 6.0);
+    } else {
+        for o in outages {
+            text(
+                &format!("start @{}  duration {}",
+                    o.ts_start / 1000,
+                    o.duration_ms.map(fmt_dur).unwrap_or_else(|| "ongoing".into())),
+                10.0, false, 4.0, 6.0,
+            );
+        }
+    }
+
+    let mut buf = Vec::new();
+    doc.save(&mut BufWriter::new(&mut buf))?;
+    std::fs::write(path, buf)?;
     Ok(())
 }
 
