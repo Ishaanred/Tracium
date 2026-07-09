@@ -168,6 +168,14 @@ interface Target {
 const DAY_SECS = 24 * 60 * 60;
 const QOE_WINDOW_SECS = 30 * 60; // smooth QoE over the last 30 minutes
 
+// Trend ranges: 24h uses hourly rollups; 7d/30d use daily rollups (which persist
+// past raw-sample retention, unlike week/month buckets computed from raw).
+const TREND_RANGES: Record<string, { bucket: string; secs: number; label: string }> = {
+  "24h": { bucket: "hour", secs: DAY_SECS, label: "24 hours (hourly)" },
+  "7d": { bucket: "day", secs: 7 * DAY_SECS, label: "7 days (daily)" },
+  "30d": { bucket: "day", secs: 30 * DAY_SECS, label: "30 days (daily)" },
+};
+
 function fmtMs(v: number | null | undefined): string {
   return v == null ? "—" : `${v.toFixed(0)} ms`;
 }
@@ -198,6 +206,8 @@ export default function App() {
   const [qoe, setQoe] = useState<QoeAverage | null>(null);
   const [rel, setRel] = useState<Reliability | null>(null);
   const [history, setHistory] = useState<Rollup[]>([]);
+  const [trendMetric, setTrendMetric] = useState<"latency" | "loss" | "jitter">("latency");
+  const [trendRange, setTrendRange] = useState<"24h" | "7d" | "30d">("24h");
   const [targetStatus, setTargetStatus] = useState<TargetStatus[]>([]);
   const [events, setEvents] = useState<NetEvent[]>([]);
   const [outages, setOutages] = useState<Outage[]>([]);
@@ -266,10 +276,11 @@ export default function App() {
     invoke<QoeAverage | null>("qoe_average", { windowSecs: QOE_WINDOW_SECS })
       .then(setQoe)
       .catch(() => {});
+    const r = TREND_RANGES[trendRange];
     invoke<Rollup[]>("metric_history", {
-      metric: "latency",
-      bucket: "hour",
-      windowSecs: DAY_SECS,
+      metric: trendMetric,
+      bucket: r.bucket,
+      windowSecs: r.secs,
     })
       .then(setHistory)
       .catch(() => {});
@@ -330,7 +341,22 @@ export default function App() {
     };
   }, []);
 
+  // Refetch the trend chart immediately when the metric/range selector changes.
+  useEffect(() => {
+    const r = TREND_RANGES[trendRange];
+    invoke<Rollup[]>("metric_history", {
+      metric: trendMetric,
+      bucket: r.bucket,
+      windowSecs: r.secs,
+    })
+      .then(setHistory)
+      .catch(() => {});
+  }, [trendMetric, trendRange]);
+
   const online = status?.online ?? null;
+  const trendUnit = trendMetric === "loss" ? "%" : " ms";
+  const fmtTrend = (v: number | null | undefined) =>
+    v == null ? "—" : `${v.toFixed(trendMetric === "loss" ? 1 : 0)}${trendUnit}`;
 
   return (
     <main className="app">
@@ -525,21 +551,45 @@ export default function App() {
       </section>
 
       <section className="card">
-        <CardTitle
-          title="Latency — last 24h (hourly avg)"
-          info="Hourly average round-trip time. p95 = the worst-hour 95th percentile, i.e. how bad latency gets during the rough patches — a better 'is it laggy?' signal than the average."
-        />
+        <div className="trend-head">
+          <CardTitle
+            title="Trends"
+            info="Average per bucket over the selected range (hourly for 24h, daily for 7d/30d). p95 = the worst bucket's 95th percentile — how bad it gets during rough patches. Daily rollups persist beyond raw-sample retention, so longer ranges keep working."
+          />
+          <div className="row">
+            <select
+              className="input input--sm"
+              value={trendMetric}
+              onChange={(e) => setTrendMetric(e.target.value as typeof trendMetric)}
+            >
+              <option value="latency">Latency</option>
+              <option value="loss">Packet loss</option>
+              <option value="jitter">Jitter</option>
+            </select>
+            <select
+              className="input input--sm"
+              value={trendRange}
+              onChange={(e) => setTrendRange(e.target.value as typeof trendRange)}
+            >
+              <option value="24h">24h</option>
+              <option value="7d">7 days</option>
+              <option value="30d">30 days</option>
+            </select>
+          </div>
+        </div>
         {history.length > 1 ? (
           <>
             <Sparkline points={history.map((h) => h.avg ?? 0)} />
             <p className="status" style={{ marginTop: 8, fontSize: 12 }}>
-              min {fmtMs(Math.min(...history.map((h) => h.min ?? Infinity)))} · p95 (worst hour){" "}
-              {fmtMs(Math.max(...history.map((h) => h.p95 ?? 0)))} · max{" "}
-              {fmtMs(Math.max(...history.map((h) => h.max ?? 0)))}
+              {TREND_RANGES[trendRange].label} · min {fmtTrend(Math.min(...history.map((h) => h.min ?? Infinity)))} ·
+              p95 {fmtTrend(Math.max(...history.map((h) => h.p95 ?? 0)))} ·
+              max {fmtTrend(Math.max(...history.map((h) => h.max ?? 0)))}
             </p>
           </>
         ) : (
-          <p className="status">Not enough history yet — building hourly rollups.</p>
+          <p className="status">
+            Not enough history yet for this range — {trendRange === "24h" ? "building hourly rollups" : "daily rollups accrue once each day closes"}.
+          </p>
         )}
       </section>
 

@@ -312,6 +312,16 @@ body {
 }
 .input--sm { flex: 0 0 120px; }
 
+.trend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.trend-head .row { flex-wrap: nowrap; }
+.trend-head select.input { flex: 0 0 auto; min-width: 90px; cursor: pointer; }
+
 .targets {
   list-style: none;
   margin: 0;
