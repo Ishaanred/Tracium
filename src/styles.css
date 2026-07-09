@@ -300,6 +300,16 @@ body {
 }
 .btn:hover { filter: brightness(1.1); }
 .btn:disabled { opacity: 0.5; cursor: default; }
+.x-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.x-btn:hover { color: var(--bad); }
 .input {
   flex: 1;
   min-width: 140px;

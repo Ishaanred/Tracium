@@ -235,6 +235,29 @@ export default function App() {
   const [planDown, setPlanDown] = useState("");
   const [planUp, setPlanUp] = useState("");
 
+  const [newLabel, setNewLabel] = useState("");
+  const [newHost, setNewHost] = useState("");
+  const [newIpv, setNewIpv] = useState<"4" | "6" | "any">("4");
+
+  const refreshTargets = () =>
+    invoke<TargetStatus[]>("target_status").then(setTargetStatus).catch(() => {});
+  const addTarget = () => {
+    if (!newLabel.trim() || !newHost.trim()) return;
+    invoke("create_target", {
+      label: newLabel.trim(),
+      host: newHost.trim(),
+      ipVersion: newIpv === "any" ? null : parseInt(newIpv),
+    })
+      .then(() => {
+        setNewLabel("");
+        setNewHost("");
+        refreshTargets();
+      })
+      .catch(() => {});
+  };
+  const removeTarget = (id: number) =>
+    invoke("delete_target", { id }).then(refreshTargets).catch(() => {});
+
   const saveIspPlan = () => {
     const d = parseFloat(planDown);
     const u = parseFloat(planUp);
@@ -405,12 +428,12 @@ export default function App() {
         />
       </section>
 
-      {targetStatus.length > 0 && (
-        <section className="card">
-          <CardTitle
-            title="Targets"
-            info="Each server Tracium probes, with its own live latency and reachability. The Latency tile above shows the best of these. A permanently-down IPv6 target just means your network has no IPv6 — it isn't counted as loss."
-          />
+      <section className="card">
+        <CardTitle
+          title="Targets"
+          info="Each server Tracium probes, with its own live latency and reachability. The Latency tile above shows the best of these. Add your own hosts to monitor; a permanently-down IPv6 target just means your network has no IPv6."
+        />
+        {targetStatus.length > 0 && (
           <ul className="targets">
             {targetStatus.map((t) => (
               <li key={t.id}>
@@ -426,11 +449,40 @@ export default function App() {
                   {" · IPv"}
                   {t.ip_version ?? "?"}
                 </span>
+                <button className="x-btn" title={`Remove ${t.label}`} onClick={() => removeTarget(t.id)}>
+                  ×
+                </button>
               </li>
             ))}
           </ul>
-        </section>
-      )}
+        )}
+        <div className="row" style={{ marginTop: 12 }}>
+          <input
+            className="input input--sm"
+            placeholder="label"
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
+          />
+          <input
+            className="input"
+            placeholder="host or IP (e.g. 9.9.9.9)"
+            value={newHost}
+            onChange={(e) => setNewHost(e.target.value)}
+          />
+          <select
+            className="input input--sm"
+            value={newIpv}
+            onChange={(e) => setNewIpv(e.target.value as typeof newIpv)}
+          >
+            <option value="4">IPv4</option>
+            <option value="6">IPv6</option>
+            <option value="any">Any</option>
+          </select>
+          <button className="btn" onClick={addTarget} disabled={!newLabel || !newHost}>
+            Add
+          </button>
+        </div>
+      </section>
 
       <section className="card">
         <CardTitle

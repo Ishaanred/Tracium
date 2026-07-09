@@ -51,6 +51,35 @@ async fn add_target(state: State<'_, AppState>, input: NewTarget) -> Result<Targ
     state.store.add_target(input).await.map_err(|e| e.to_string())
 }
 
+/// Add a custom internet target from the UI (fills kind/enabled/created_at).
+#[tauri::command]
+async fn create_target(
+    state: State<'_, AppState>,
+    label: String,
+    host: String,
+    ip_version: Option<i64>,
+) -> Result<Target, String> {
+    let input = NewTarget {
+        label,
+        host,
+        kind: "internet".into(),
+        ip_version,
+        enabled: true,
+        created_at: now_ms(),
+    };
+    state.store.add_target(input).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_target(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    state.store.delete_target(id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_target_enabled(state: State<'_, AppState>, id: i64, enabled: bool) -> Result<(), String> {
+    state.store.set_target_enabled(id, enabled).await.map_err(|e| e.to_string())
+}
+
 /// The latest live status, if the monitor has completed a cycle.
 #[tauri::command]
 async fn current_status(state: State<'_, AppState>) -> Result<Option<StatusUpdate>, String> {
@@ -350,6 +379,9 @@ pub fn run() {
             list_targets,
             target_status,
             add_target,
+            create_target,
+            delete_target,
+            set_target_enabled,
             current_status,
             reliability,
             recent_connectivity,

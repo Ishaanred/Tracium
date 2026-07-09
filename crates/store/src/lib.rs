@@ -118,6 +118,29 @@ impl Store {
         })
     }
 
+    /// Delete a target and its connectivity samples (samples FK-reference the
+    /// target, so they must go first). Done in one transaction.
+    pub async fn delete_target(&self, id: i64) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM connectivity_samples WHERE target_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM targets WHERE id = ?").bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Enable or disable a target (disabled targets aren't probed).
+    pub async fn set_target_enabled(&self, id: i64, enabled: bool) -> Result<()> {
+        sqlx::query("UPDATE targets SET enabled = ? WHERE id = ?")
+            .bind(enabled as i64)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Seed the default internet probe targets if the table is empty. Idempotent.
     pub async fn seed_default_targets(&self, now: i64) -> Result<()> {
         let existing: i64 = sqlx::query_scalar("SELECT count(*) FROM targets")
@@ -1357,6 +1380,26 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].host, "1.1.1.1");
         assert_eq!(all[0].ip_version, Some(4));
+    }
+
+    #[tokio::test]
+    async fn delete_target_removes_it_and_its_samples() {
+        let store = Store::open_in_memory().await.unwrap();
+        store.seed_default_targets(0).await.unwrap();
+        store
+            .insert_connectivity_sample(NewConnectivitySample {
+                ts: 1, target_id: 1, ip_version: 4, sent: 1, received: 1, loss_pct: 0.0,
+                rtt_min: Some(1.0), rtt_avg: Some(1.0), rtt_max: Some(1.0), rtt_jitter: Some(0.0), up: true,
+            })
+            .await
+            .unwrap();
+        store.delete_target(1).await.unwrap();
+        assert_eq!(store.list_targets().await.unwrap().len(), 2);
+        // its samples are gone too (would otherwise violate the FK)
+        assert_eq!(store.recent_connectivity(10).await.unwrap().len(), 0);
+
+        store.set_target_enabled(2, false).await.unwrap();
+        assert!(!store.list_targets().await.unwrap().iter().find(|t| t.id == 2).unwrap().enabled);
     }
 
     #[tokio::test]
