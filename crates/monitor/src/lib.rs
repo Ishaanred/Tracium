@@ -82,7 +82,7 @@ impl Default for MonitorConfig {
             traceroute_interval: Duration::from_secs(600),
             traceroute_target: "1.1.1.1".to_string(),
             traceroute_max_hops: 30,
-            traceroute_timeout: Duration::from_secs(25),
+            traceroute_timeout: Duration::from_secs(40),
         }
     }
 }
@@ -305,6 +305,7 @@ impl Monitor {
                 ip: h.ip.clone(),
                 hostname: None,
                 rtt_ms: h.rtt_ms,
+                loss_pct: h.loss_pct,
             })
             .collect();
         self.store.save_traceroute(now, target, &trace.route_hash, &hops).await?;

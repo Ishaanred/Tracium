@@ -560,13 +560,14 @@ impl Store {
             sqlx::query(
                 "INSERT INTO traceroute_hops \
                  (traceroute_id, hop_no, ip, hostname, asn, as_name, rtt_ms, loss_pct) \
-                 VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL)",
+                 VALUES (?, ?, ?, ?, NULL, NULL, ?, ?)",
             )
             .bind(id)
             .bind(h.hop_no)
             .bind(&h.ip)
             .bind(&h.hostname)
             .bind(h.rtt_ms)
+            .bind(h.loss_pct)
             .execute(&self.pool)
             .await?;
         }
@@ -596,7 +597,7 @@ impl Store {
             return Ok(None);
         };
         let hops = sqlx::query_as::<_, TracerouteHopRow>(
-            "SELECT hop_no, ip, hostname, rtt_ms FROM traceroute_hops \
+            "SELECT hop_no, ip, hostname, rtt_ms, loss_pct FROM traceroute_hops \
              WHERE traceroute_id = ? ORDER BY hop_no",
         )
         .bind(id)
@@ -1123,6 +1124,7 @@ pub struct TracerouteHop {
     pub ip: Option<String>,
     pub hostname: Option<String>,
     pub rtt_ms: Option<f64>,
+    pub loss_pct: Option<f64>,
 }
 
 /// A stored traceroute hop (for display).
@@ -1132,6 +1134,7 @@ pub struct TracerouteHopRow {
     pub ip: Option<String>,
     pub hostname: Option<String>,
     pub rtt_ms: Option<f64>,
+    pub loss_pct: Option<f64>,
 }
 
 /// A traceroute with its hops.
@@ -1536,9 +1539,9 @@ mod tests {
         assert!(store.last_route_hash("1.1.1.1").await.unwrap().is_none());
 
         let hops = vec![
-            TracerouteHop { hop_no: 1, ip: Some("192.168.1.1".into()), hostname: None, rtt_ms: Some(1.2) },
-            TracerouteHop { hop_no: 2, ip: None, hostname: None, rtt_ms: None },
-            TracerouteHop { hop_no: 3, ip: Some("1.1.1.1".into()), hostname: None, rtt_ms: Some(9.0) },
+            TracerouteHop { hop_no: 1, ip: Some("192.168.1.1".into()), hostname: None, rtt_ms: Some(1.2), loss_pct: Some(0.0) },
+            TracerouteHop { hop_no: 2, ip: None, hostname: None, rtt_ms: None, loss_pct: Some(100.0) },
+            TracerouteHop { hop_no: 3, ip: Some("1.1.1.1".into()), hostname: None, rtt_ms: Some(9.0), loss_pct: Some(20.0) },
         ];
         store.save_traceroute(500, "1.1.1.1", "abc123", &hops).await.unwrap();
 
@@ -1548,6 +1551,7 @@ mod tests {
         assert_eq!(view.hop_count, 3);
         assert_eq!(view.hops.len(), 3);
         assert_eq!(view.hops[0].ip.as_deref(), Some("192.168.1.1"));
+        assert_eq!(view.hops[2].loss_pct, Some(20.0));
         assert!(view.hops[1].ip.is_none());
     }
 

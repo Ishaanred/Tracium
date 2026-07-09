@@ -277,6 +277,10 @@ body {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+.hops__loss {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
 .events li {
   display: flex;
   align-items: center;
