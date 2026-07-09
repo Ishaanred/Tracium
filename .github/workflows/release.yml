@@ -1,7 +1,9 @@
 name: Release
 
-# Push a tag like v0.1.0 to build + publish a draft GitHub Release with the
-# desktop bundles (.deb/.AppImage/.msi) and the traciumd daemon binaries.
+# Push a tag like v0.1.0 to build + publish a DRAFT GitHub Release.
+# Linux-only for now (Windows is experimental/untested — tracked separately).
+# One job owns the release: tauri-action creates the draft + uploads the desktop
+# bundles, then we append the daemon binary with `gh` (no two-actions race).
 on:
   push:
     tags: ["v*"]
@@ -10,17 +12,12 @@ permissions:
   contents: write
 
 jobs:
-  desktop:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  release-linux:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Tauri system deps (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Install Tauri system deps
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -41,9 +38,11 @@ jobs:
 
       - name: Fetch bundled sidecars (librespeed-cli)
         run: bash scripts/fetch-sidecars.sh
-        shell: bash
 
-      - name: Build + publish desktop bundle
+      - name: Build headless daemon
+        run: cargo build --release -p tracium-cli
+
+      - name: Build desktop bundles + create draft release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -55,43 +54,19 @@ jobs:
           releaseBody: |
             Tracium — a lightweight desktop + headless network monitor.
 
-            **Linux is the supported platform.** Windows builds are attached as
-            an experimental preview (not yet tested — see the Windows-testing issue).
+            **Linux release.** (Windows is experimental and not yet built here.)
 
             Downloads:
-            - Desktop app (tray GUI): `.deb` / `.AppImage`
-            - Headless daemon: `traciumd-Linux-x86_64` (run it as a systemd user
-              service — see packaging/systemd/tracium.service)
+            - Desktop app (tray GUI): `.deb` / `.rpm` / `.AppImage`
+            - Headless daemon: `traciumd-linux-x86_64` — run as a systemd user
+              service (see packaging/systemd/tracium.service)
 
-            The `.deb` pulls in `traceroute`, `iw`, and `iputils-ping`. The
-            speed-test engine (librespeed-cli) is bundled.
+            The `.deb` pulls in `traceroute`, `iw`, `iputils-ping`; the speed-test
+            engine (librespeed-cli) is bundled.
 
-  daemon:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest, ext: "" }
-          - { os: windows-latest, ext: ".exe" }
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build traciumd (release)
-        run: cargo build --release -p tracium-cli
-
-      - name: Stage binary with an OS-specific name
-        shell: bash
+      - name: Attach the daemon binary to the same draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p dist-bin
-          cp "target/release/traciumd${{ matrix.ext }}" \
-             "dist-bin/traciumd-${{ runner.os }}-x86_64${{ matrix.ext }}"
-
-      - name: Attach daemon binary to the release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          draft: true
-          files: dist-bin/*
+          cp target/release/traciumd traciumd-linux-x86_64
+          gh release upload "${{ github.ref_name }}" traciumd-linux-x86_64 --clobber
