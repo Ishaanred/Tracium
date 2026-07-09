@@ -294,6 +294,12 @@ async fn public_ip(state: State<'_, AppState>) -> Result<Option<String>, String>
     state.store.latest_public_ip().await.map_err(|e| e.to_string())
 }
 
+/// Recent DNS cache hit rate (systemd-resolved, Linux only). `None` elsewhere.
+#[tauri::command]
+async fn dns_cache_hit_rate(state: State<'_, AppState>) -> Result<Option<f64>, String> {
+    state.store.get_setting_f64("dns.cache_hit_rate").await.map_err(|e| e.to_string())
+}
+
 /// Per-resolver DNS comparison over the last `window_secs` seconds.
 #[tauri::command]
 async fn dns_comparison(
@@ -394,6 +400,7 @@ pub fn run() {
             metric_history,
             qoe_average,
             dns_comparison,
+            dns_cache_hit_rate,
             public_ip,
             bandwidth_now,
             bandwidth_totals,

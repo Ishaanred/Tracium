@@ -55,9 +55,64 @@ pub async fn dns_lookup(resolver_ip: IpAddr, host: &str, timeout: Duration) -> D
     }
 }
 
+/// Cumulative DNS cache hit/miss counters (systemd-resolved, Linux only).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DnsCacheStats {
+    pub hits: i64,
+    pub misses: i64,
+}
+
+/// Read systemd-resolved's cache counters via `resolvectl statistics`.
+/// `None` on non-Linux, or if resolvectl/systemd-resolved isn't present.
+pub fn dns_cache_stats() -> Option<DnsCacheStats> {
+    #[cfg(target_os = "linux")]
+    {
+        let out = std::process::Command::new("resolvectl").arg("statistics").output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        parse_resolvectl(&String::from_utf8_lossy(&out.stdout))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+/// Parse the `Cache Hits:` / `Cache Misses:` lines from `resolvectl statistics`.
+pub fn parse_resolvectl(text: &str) -> Option<DnsCacheStats> {
+    let mut hits = None;
+    let mut misses = None;
+    for line in text.lines() {
+        let l = line.trim();
+        if let Some(v) = l.strip_prefix("Cache Hits:") {
+            hits = v.trim().parse().ok();
+        } else if let Some(v) = l.strip_prefix("Cache Misses:") {
+            misses = v.trim().parse().ok();
+        }
+    }
+    Some(DnsCacheStats { hits: hits?, misses: misses? })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_resolvectl_statistics() {
+        let sample = "\
+Transactions
+              Current Transactions: 0
+                Total Transactions: 182475
+Cache
+                Current Cache Size: 57
+                        Cache Hits: 3000
+                      Cache Misses: 179475";
+        let s = parse_resolvectl(sample).unwrap();
+        assert_eq!(s.hits, 3000);
+        assert_eq!(s.misses, 179475);
+    }
+
 
     #[tokio::test]
     #[ignore = "hits the real internet; run with --ignored"]

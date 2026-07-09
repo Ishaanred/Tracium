@@ -38,7 +38,7 @@ pub use devices::{discover_devices, ArpEntry};
 pub use router::{query_router, RouterInfo};
 pub use wifi::{get_wifi, WifiInfo};
 pub use bandwidth::{BandwidthSample, BandwidthSampler};
-pub use dns::{dns_lookup, DnsResult};
+pub use dns::{dns_cache_stats, dns_lookup, DnsCacheStats, DnsResult};
 pub use netinfo::public_ip;
 pub use security::{check_doh, check_dot, detect_vpn, firewall_active, scan_local_ports, VpnStatus};
 pub use traceroute::{traceroute, Hop, TraceResult};

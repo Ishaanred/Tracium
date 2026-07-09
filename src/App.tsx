@@ -240,6 +240,7 @@ export default function App() {
   const [outages, setOutages] = useState<Outage[]>([]);
   const [speedHistory, setSpeedHistory] = useState<Speedtest[]>([]);
   const [dns, setDns] = useState<DnsStat[]>([]);
+  const [dnsCacheHit, setDnsCacheHit] = useState<number | null>(null);
   const [publicIp, setPublicIp] = useState<string | null>(null);
   const [bw, setBw] = useState<BandwidthNow | null>(null);
   const [bwTotal, setBwTotal] = useState<BandwidthTotals | null>(null);
@@ -341,6 +342,7 @@ export default function App() {
     invoke<TargetStatus[]>("target_status").then(setTargetStatus).catch(() => {});
     invoke<NetEvent[]>("recent_events", { limit: 20 }).then(setEvents).catch(() => {});
     invoke<DnsStat[]>("dns_comparison", { windowSecs: DAY_SECS }).then(setDns).catch(() => {});
+    invoke<number | null>("dns_cache_hit_rate").then(setDnsCacheHit).catch(() => {});
     invoke<string | null>("public_ip").then(setPublicIp).catch(() => {});
     invoke<BandwidthNow | null>("bandwidth_now").then(setBw).catch(() => {});
     invoke<BandwidthTotals>("bandwidth_totals", { windowSecs: DAY_SECS })
@@ -834,6 +836,12 @@ export default function App() {
               </li>
             ))}
           </ul>
+        )}
+        {dnsCacheHit != null && (
+          <p className="status" style={{ marginTop: 10, fontSize: 12 }}>
+            cache hit rate: {dnsCacheHit.toFixed(0)}%
+            <Info text="Share of recent DNS lookups answered instantly from the local systemd-resolved cache (Linux only). Higher = snappier page loads. Not shown on systems without systemd-resolved." />
+          </p>
         )}
       </section>
 

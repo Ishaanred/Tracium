@@ -16,8 +16,8 @@ use tracium_probe::security::{
     COMMON_PORTS,
 };
 use tracium_probe::{
-    default_gateway_ip, discover_devices, dns_lookup, get_wifi, interface_errors, ping, probe,
-    public_ip, traceroute, BandwidthSampler, ProbeConfig,
+    default_gateway_ip, discover_devices, dns_cache_stats, dns_lookup, get_wifi, interface_errors,
+    ping, probe, public_ip, traceroute, BandwidthSampler, ProbeConfig,
 };
 use tracium_store::{
     NewConnectivitySample, SecuritySnapshot, Store, StoreError, TracerouteHop, WifiSample,
@@ -218,6 +218,23 @@ impl Monitor {
             self.store
                 .insert_dns_sample(now, &r.resolver, &r.query_host, r.lookup_ms, r.success, None)
                 .await?;
+        }
+
+        // Cache hit rate (Linux/systemd-resolved only): store cumulative counters
+        // and derive the recent hit rate from the delta since the last sample.
+        if let Some(cur) = dns_cache_stats() {
+            let prev_h = self.store.get_setting_f64("dns.cache_hits").await?;
+            let prev_m = self.store.get_setting_f64("dns.cache_misses").await?;
+            if let (Some(ph), Some(pm)) = (prev_h, prev_m) {
+                let dh = (cur.hits as f64 - ph).max(0.0);
+                let dm = (cur.misses as f64 - pm).max(0.0);
+                if dh + dm > 0.0 {
+                    let rate = dh / (dh + dm) * 100.0;
+                    self.store.set_setting("dns.cache_hit_rate", &rate.to_string(), now).await?;
+                }
+            }
+            self.store.set_setting("dns.cache_hits", &cur.hits.to_string(), now).await?;
+            self.store.set_setting("dns.cache_misses", &cur.misses.to_string(), now).await?;
         }
         Ok(())
     }
