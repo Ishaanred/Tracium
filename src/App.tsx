@@ -168,14 +168,6 @@ interface TargetStatus {
   up: boolean | null;
 }
 
-interface Target {
-  id: number;
-  label: string;
-  host: string;
-  kind: string;
-  ip_version: number | null;
-  enabled: boolean;
-}
 
 const DAY_SECS = 24 * 60 * 60;
 const QOE_WINDOW_SECS = 30 * 60; // smooth QoE over the last 30 minutes
@@ -227,7 +219,28 @@ function fmtDur(ms: number | null | undefined): string {
   return `${(s / 3600).toFixed(1)}h`;
 }
 
+type Tab = "overview" | "connectivity" | "lan" | "routing" | "security" | "history";
+const TABS: { id: Tab; label: string }[] = [
+  { id: "overview", label: "Overview" },
+  { id: "connectivity", label: "Connectivity" },
+  { id: "lan", label: "Wi-Fi & LAN" },
+  { id: "routing", label: "DNS & Routing" },
+  { id: "security", label: "Security" },
+  { id: "history", label: "History" },
+];
+
 export default function App() {
+  const [tab, setTab] = useState<Tab>("overview");
+  const [theme, setTheme] = useState<"dark" | "light">(
+    () =>
+      (localStorage.getItem("tracium-theme") as "dark" | "light" | null) ??
+      (window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark"),
+  );
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("tracium-theme", theme);
+  }, [theme]);
+
   const [status, setStatus] = useState<StatusUpdate | null>(null);
   const [qoe, setQoe] = useState<QoeAverage | null>(null);
   const [rel, setRel] = useState<Reliability | null>(null);
@@ -242,6 +255,7 @@ export default function App() {
   const [dns, setDns] = useState<DnsStat[]>([]);
   const [dnsCacheHit, setDnsCacheHit] = useState<number | null>(null);
   const [publicIp, setPublicIp] = useState<string | null>(null);
+  const [showIp, setShowIp] = useState(false);
   const [bw, setBw] = useState<BandwidthNow | null>(null);
   const [bwTotal, setBwTotal] = useState<BandwidthTotals | null>(null);
   const [security, setSecurity] = useState<Security | null>(null);
@@ -250,7 +264,6 @@ export default function App() {
   const [gateway, setGateway] = useState<Gateway | null>(null);
   const [ifErrors, setIfErrors] = useState<IfErrors | null>(null);
   const [wifi, setWifi] = useState<Wifi | null>(null);
-  const [targets, setTargets] = useState<Target[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   const [routerAddr, setRouterAddr] = useState("");
@@ -381,7 +394,6 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        setTargets(await invoke<Target[]>("list_targets"));
         setStatus(await invoke<StatusUpdate | null>("current_status"));
         refreshDerived();
       } catch (e) {
@@ -423,25 +435,56 @@ export default function App() {
 
   return (
     <main className="app">
-      <header className="app__header">
-        <span
-          className={`app__pulse ${online === false ? "app__pulse--down" : ""}`}
-          aria-hidden
-        />
-        <div>
-          <h1>Tracium</h1>
-          <p className="app__tagline">
-            {publicIp ? `Public IP · ${publicIp}` : "Know your network. Inside and out."}
-          </p>
-        </div>
+      <header className="topbar">
+        <span className={`app__pulse ${online === false ? "app__pulse--down" : ""}`} aria-hidden />
+        <strong className="topbar__name">Tracium</strong>
         <span className={`badge ${online ? "badge--ok" : online === false ? "badge--bad" : ""}`}>
           {online == null ? "Starting…" : online ? "Online" : "Offline"}
         </span>
+        <span className="topbar__kpis">
+          <span>{fmtMs(status?.best_latency_ms)}</span>
+          <span>{fmtPct(status?.avg_loss_pct)} loss</span>
+          {rel && <span>{rel.uptime_pct.toFixed(1)}% up (24h)</span>}
+          {publicIp && (
+            <button
+              className="topbar__ip"
+              title={showIp ? "Hide public IP" : "Reveal public IP"}
+              aria-label={showIp ? "Hide public IP" : "Reveal public IP"}
+              onClick={() => setShowIp((v) => !v)}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              {showIp ? publicIp : "IP"}
+            </button>
+          )}
+        </span>
+        <button
+          className="icon-btn"
+          title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+          onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+        >
+          {theme === "dark" ? "☀" : "☾"}
+        </button>
       </header>
+
+      <nav className="tabs">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            className={`tabs__btn ${tab === t.id ? "is-active" : ""}`}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
 
       {error && <p className="status status--bad">{error}</p>}
 
-      <section className="grid">
+      <div className="panels" data-active={tab}>
+      <section className="grid" data-tab="overview">
         <Stat
           label="Latency"
           value={fmtMs(status?.best_latency_ms)}
@@ -468,7 +511,7 @@ export default function App() {
         />
       </section>
 
-      <section className="card">
+      <section className="card" data-tab="connectivity">
         <CardTitle
           title="Targets"
           info="Each server Tracium probes, with its own live latency and reachability. The Latency tile above shows the best of these. Add your own hosts to monitor; a permanently-down IPv6 target just means your network has no IPv6."
@@ -524,7 +567,7 @@ export default function App() {
         </div>
       </section>
 
-      <section className="card">
+      <section className="card" data-tab="connectivity">
         <CardTitle
           title="Speed test"
           info="On-demand download/upload throughput + ping via librespeed-cli. Uses data and takes ~30s, so it isn't run automatically."
@@ -619,7 +662,7 @@ export default function App() {
         )}
       </section>
 
-      <section className="card">
+      <section className="card" data-tab="overview">
         <CardTitle
           title="Quality of experience"
           info="0–100 scores estimating how good each activity feels, averaged over the last 30 minutes so they settle instead of jumping each cycle. Computed from latency, jitter and packet loss — 80+ is great, under 50 is rough."
@@ -642,7 +685,7 @@ export default function App() {
         )}
       </section>
 
-      <section className="card">
+      <section className="card" data-tab="overview">
         <div className="trend-head">
           <CardTitle
             title="Trends"
@@ -686,7 +729,7 @@ export default function App() {
       </section>
 
       {peakVals.length > 3 && (
-        <section className="card">
+        <section className="card" data-tab="overview">
           <CardTitle
             title="Latency by hour of day (7d)"
             info="Average latency for each hour of the day over the last week (your local time). Tall/red bars are peak hours — when your neighbourhood saturates the node and latency climbs."
@@ -720,7 +763,7 @@ export default function App() {
         </section>
       )}
 
-      <section className="card">
+      <section className="card" data-tab="overview">
         <h2>Last 24 hours</h2>
         {rel ? (
           <div className="grid">
@@ -744,7 +787,7 @@ export default function App() {
         )}
       </section>
 
-      <section className="card">
+      <section className="card" data-tab="security">
         <CardTitle
           title="Security"
           info="A snapshot of your network's security posture — firewall, encrypted DNS, VPN and locally-open ports."
@@ -804,7 +847,7 @@ export default function App() {
         )}
       </section>
 
-      <section className="card">
+      <section className="card" data-tab="lan">
         <CardTitle
           title="Bandwidth"
           info="Live throughput through this machine's network interfaces, plus totals moved today. Not per-app or per-device."
@@ -817,7 +860,7 @@ export default function App() {
         </div>
       </section>
 
-      <section className="card">
+      <section className="card" data-tab="routing">
         <CardTitle
           title="DNS resolvers — last 24h"
           info="DNS turns names like example.com into IP addresses before anything loads. This compares how fast each resolver answers — lower is better."
@@ -846,7 +889,7 @@ export default function App() {
       </section>
 
       {wifi && (
-        <section className="card">
+        <section className="card" data-tab="lan">
           <h2>Wi-Fi{wifi.ssid ? ` · ${wifi.ssid}` : ""}</h2>
           <div className="grid">
             <Stat
@@ -874,7 +917,7 @@ export default function App() {
       )}
 
       {gateway && (
-        <section className="card">
+        <section className="card" data-tab="lan">
           <CardTitle
             title="Local network"
             info="Latency and packet loss to your router (the gateway), measured with ICMP ping. High gateway latency or LAN loss points to a local problem (Wi-Fi, cabling, router) rather than your ISP."
@@ -894,7 +937,7 @@ export default function App() {
         </section>
       )}
 
-      <section className="card">
+      <section className="card" data-tab="lan">
         <h2>
           Devices on network{devices.length ? ` · ${devices.length}` : ""}
           <Info text="Devices seen on your local network, from the ARP cache (neighbours this machine has recently talked to). Not a full active scan." />
@@ -914,7 +957,7 @@ export default function App() {
         )}
       </section>
 
-      <section className="card">
+      <section className="card" data-tab="routing">
         <h2>
           Route{trace ? ` to ${trace.target} · ${trace.hop_count} hops` : ""}
           <Info text="The path your packets take to reach the target, hop by hop: the network (AS) each hop belongs to, round-trip time, and packet loss (5 probes/hop). Loss that starts at a hop and continues points to where the trouble is; the AS shows which ISP/provider carries each leg." />
@@ -927,7 +970,7 @@ export default function App() {
                 <span className="hops__ip">{h.ip ?? "* (no reply)"}</span>
                 {h.as_name && <span className="hops__as">{h.as_name.split(/[-,]/)[0].trim()}</span>}
                 {h.loss_pct != null && h.loss_pct > 0 && (
-                  <span className="hops__loss" style={{ color: h.loss_pct >= 50 ? "var(--bad)" : "#fbbf24" }}>
+                  <span className="hops__loss" style={{ color: h.loss_pct >= 50 ? "var(--bad)" : "var(--warn)" }}>
                     {h.loss_pct.toFixed(0)}% loss
                   </span>
                 )}
@@ -942,7 +985,7 @@ export default function App() {
         )}
       </section>
 
-      <section className="card">
+      <section className="card" data-tab="history">
         <h2>Event timeline</h2>
         {events.length === 0 ? (
           <p className="status">No events yet.</p>
@@ -962,7 +1005,7 @@ export default function App() {
         )}
       </section>
 
-      <section className="card">
+      <section className="card" data-tab="history">
         <CardTitle
           title="Incident log"
           info="Every internet outage (all targets unreachable), with how long it lasted and how long it took to reconnect."
@@ -991,7 +1034,7 @@ export default function App() {
         )}
       </section>
 
-      <section className="card">
+      <section className="card" data-tab="lan">
         <h2>Router (SNMP)</h2>
         <div className="row">
           <input
@@ -1037,7 +1080,7 @@ export default function App() {
         {routerMsg && <p className="status">{routerMsg}</p>}
       </section>
 
-      <section className="card">
+      <section className="card" data-tab="history">
         <h2>Export</h2>
         <div className="row">
           <button className="btn" onClick={() => doExport("connectivity")}>
@@ -1049,30 +1092,14 @@ export default function App() {
         </div>
         {exportMsg && <p className="status status--ok">{exportMsg}</p>}
       </section>
-
-      <section className="card">
-        <h2>Probe targets</h2>
-        {targets.length === 0 ? (
-          <p className="status">No targets configured yet.</p>
-        ) : (
-          <ul className="targets">
-            {targets.map((t) => (
-              <li key={t.id}>
-                <strong>{t.label}</strong>
-                <span className="targets__host">{t.host}</span>
-                <span className="targets__kind">IPv{t.ip_version ?? "?"}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      </div>
     </main>
   );
 }
 
 function scoreColor(v: number): string {
   if (v >= 80) return "var(--ok)";
-  if (v >= 50) return "#fbbf24";
+  if (v >= 50) return "var(--warn)";
   return "var(--bad)";
 }
 

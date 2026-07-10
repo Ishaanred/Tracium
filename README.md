@@ -19,6 +19,10 @@
   <img src="https://img.shields.io/badge/license-MIT-0891b2?style=flat-square" alt="License: MIT" />
 </p>
 
+<p align="center">
+  <img src="assets/screenshot.png" alt="Tracium overview: summary bar, tabs, and connectivity stats" width="720" />
+</p>
+
 ---
 
 ## Why Tracium?

@@ -1,13 +1,47 @@
-:root {
+/* Dark theme (default) */
+:root,
+:root[data-theme="dark"] {
   --bg: #0b1120;
   --card: #131c31;
+  --elev: #1b2743;
   --border: #22304d;
   --text: #e6edf7;
   --muted: #8b9bb7;
-  --accent: #0891b2;
+  --accent: #22c1d6;
   --ok: #34d399;
+  --warn: #fbbf24;
   --bad: #f87171;
   color-scheme: dark;
+}
+
+/* Light theme: its own values (validated for contrast on white), not a flip. */
+:root[data-theme="light"] {
+  --bg: #f4f6fa;
+  --card: #ffffff;
+  --elev: #eef2f7;
+  --border: #d9e0ea;
+  --text: #101a2c;
+  --muted: #566780;
+  --accent: #0e7490;
+  --ok: #059669;
+  --warn: #b45309;
+  --bad: #dc2626;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: #f4f6fa;
+    --card: #ffffff;
+    --elev: #eef2f7;
+    --border: #d9e0ea;
+    --text: #101a2c;
+    --muted: #566780;
+    --accent: #0e7490;
+    --ok: #059669;
+    --warn: #b45309;
+    --bad: #dc2626;
+    color-scheme: light;
+  }
 }
 
 * {
@@ -180,7 +214,7 @@ body {
   left: 50%;
   transform: translateX(-50%);
   width: 230px;
-  background: #0a101e;
+  background: var(--elev);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 9px 11px;
@@ -303,7 +337,7 @@ body {
   flex: none;
 }
 .dot--critical { background: var(--bad); }
-.dot--warn { background: #fbbf24; }
+.dot--warn { background: var(--warn); }
 .dot--info { background: var(--ok); }
 .events__kind {
   font-weight: 600;
@@ -394,4 +428,117 @@ body {
   margin-left: auto;
   font-size: 12px;
   color: var(--accent);
+}
+
+/* Sticky summary bar */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  margin: -32px -24px 0;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.topbar__name {
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+.topbar .badge {
+  margin-left: 0;
+}
+.topbar__kpis {
+  display: flex;
+  gap: 14px;
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.topbar__ip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--muted);
+  cursor: pointer;
+}
+.topbar__ip:hover {
+  color: var(--text);
+}
+.icon-btn {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.icon-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Tab navigation */
+.tabs {
+  position: sticky;
+  top: 57px;
+  z-index: 19;
+  display: flex;
+  gap: 4px;
+  padding: 12px 0;
+  margin-bottom: 8px;
+  background: var(--bg);
+  overflow-x: auto;
+}
+.tabs__btn {
+  flex: none;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tabs__btn:hover {
+  color: var(--text);
+  background: var(--elev);
+}
+.tabs__btn.is-active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* Tab panels: only the active tab's sections are shown. */
+.panels > [data-tab] {
+  display: none;
+}
+.panels[data-active="overview"] > [data-tab~="overview"],
+.panels[data-active="connectivity"] > [data-tab~="connectivity"],
+.panels[data-active="lan"] > [data-tab~="lan"],
+.panels[data-active="routing"] > [data-tab~="routing"],
+.panels[data-active="security"] > [data-tab~="security"],
+.panels[data-active="history"] > [data-tab~="history"] {
+  display: block;
+}
+/* the KPI grid must keep its grid layout when shown */
+.panels[data-active="overview"] > .grid[data-tab~="overview"] {
+  display: grid;
 }
