@@ -7,8 +7,8 @@ repository.workspace = true
 description = "Tracium monitoring orchestration: sampler loop + outage detection."
 
 [dependencies]
-tracium-store = { path = "../store" }
-tracium-probe = { path = "../probe" }
+tracium-store = { path = "../store", version = "0.1.0" }
+tracium-probe = { path = "../probe", version = "0.1.0" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -254,6 +254,10 @@ loginctl enable-linger "$USER"       # keep running across reboots/logout
 The daemon and the desktop app share one local database
 (`com.tracium.app/tracium.db`). Run one writer at a time (daemon or GUI).
 
+**Package manager status:** AUR and Snap manifests are ready to publish;
+`traciumd` is set up to publish to crates.io. Flathub needs an extra vendoring
+step first. Details and exact commands in [`packaging/README.md`](packaging/README.md).
+
 ---
 
 ## Status

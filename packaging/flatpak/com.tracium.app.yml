@@ -1,0 +1,49 @@
+# Flathub manifest skeleton for Tracium.
+#
+# NOT build-ready as-is. Flathub builds run with NO network access, so every
+# cargo crate and pnpm package must be vendored ahead of time via generated
+# sources files — see packaging/flatpak/README.md for the exact steps.
+
+app-id: com.tracium.app
+runtime: org.gnome.Platform
+runtime-version: '46'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node20
+command: tracium
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --share=network
+  - --device=dri
+  - --filesystem=xdg-data/com.tracium.app:create
+
+modules:
+  - name: tracium
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node20/bin
+      env:
+        CARGO_HOME: /run/build/tracium/cargo
+    build-commands:
+      - source /usr/lib/sdk/rust-stable/enable.sh
+      - source /usr/lib/sdk/node20/enable.sh
+      - corepack enable
+      - pnpm install --offline --frozen-lockfile
+      - pnpm tauri build --bundles deb
+      - cargo build --release --offline -p tracium-cli
+      - |
+        debfile=$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' | head -n1)
+        bsdtar -xf "$debfile" -C /tmp/deb-extract
+        datatar=$(find /tmp/deb-extract -maxdepth 1 -name 'data.tar.*' | head -n1)
+        bsdtar -xf "$datatar" -C "$FLATPAK_DEST/.."
+      - install -Dm755 target/release/traciumd "$FLATPAK_DEST/bin/traciumd"
+    sources:
+      - type: git
+        url: https://github.com/Ishaanred/Tracium.git
+        tag: v0.1.0
+      # Generated, offline dependency sources — see README.md in this folder:
+      - cargo-sources.json
+      - node-sources.json

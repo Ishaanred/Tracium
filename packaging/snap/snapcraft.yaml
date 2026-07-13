@@ -1,0 +1,65 @@
+name: tracium
+version: '0.1.0'
+summary: Know your network, inside and out.
+description: |
+  A lightweight desktop monitor that watches your connection in real time and
+  keeps a history: latency, jitter, packet loss, Wi-Fi signal, DNS, bufferbloat
+  grading, and per-activity quality-of-experience scores. No telemetry, no
+  cloud — your data stays local in SQLite. Ships with a tray GUI and a
+  headless `traciumd` daemon for servers.
+icon: assets/icon.png
+license: MIT
+base: core22
+grade: stable
+confinement: strict
+
+apps:
+  tracium:
+    command: usr/bin/tracium
+    desktop: usr/share/applications/tracium.desktop
+    extensions: [gnome]
+    plugs:
+      - network
+      - network-bind
+      - network-observe
+      - network-control
+      - home
+  traciumd:
+    command: usr/bin/traciumd
+    plugs:
+      - network
+      - network-bind
+      - network-observe
+      - home
+
+parts:
+  tracium:
+    plugin: nil
+    source: .
+    build-packages:
+      - curl
+      - file
+      - libwebkit2gtk-4.1-dev
+      - libjavascriptcoregtk-4.1-dev
+      - librsvg2-dev
+      - libssl-dev
+      - libayatana-appindicator3-dev
+    override-build: |
+      curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+      source "$HOME/.cargo/env"
+      corepack enable
+      pnpm install --frozen-lockfile
+      pnpm tauri build --bundles deb
+      cargo build --release -p tracium-cli
+
+      debfile=$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' | head -n1)
+      bsdtar -xf "$debfile" -C "$CRAFT_PART_INSTALL"/../deb-extract
+      datatar=$(find "$CRAFT_PART_INSTALL"/../deb-extract -maxdepth 1 -name 'data.tar.*' | head -n1)
+      bsdtar -xf "$datatar" -C "$CRAFT_PART_INSTALL"
+
+      install -Dm755 target/release/traciumd "$CRAFT_PART_INSTALL/usr/bin/traciumd"
+    stage-packages:
+      - libwebkit2gtk-4.1-0
+      - traceroute
+      - iw
+      - iputils-ping

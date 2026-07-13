@@ -11,9 +11,9 @@ name = "traciumd"
 path = "src/main.rs"
 
 [dependencies]
-tracium-store = { path = "../store" }
-tracium-monitor = { path = "../monitor" }
-tracium-probe = { path = "../probe" }
+tracium-store = { path = "../store", version = "0.1.0" }
+tracium-monitor = { path = "../monitor", version = "0.1.0" }
+tracium-probe = { path = "../probe", version = "0.1.0" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
