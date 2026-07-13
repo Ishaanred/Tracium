@@ -15,7 +15,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20(experimental)-0891b2?style=flat-square" alt="Platforms" />
-  <img src="https://img.shields.io/badge/status-private-inactive?style=flat-square" alt="Status" />
+  <img src="https://img.shields.io/badge/status-active%20development-0891b2?style=flat-square" alt="Status" />
   <img src="https://img.shields.io/badge/license-MIT-0891b2?style=flat-square" alt="License: MIT" />
 </p>
 
