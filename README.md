@@ -221,6 +221,26 @@ cargo build --release -p tracium-cli
 ./target/release/traciumd export connectivity > data.csv
 ```
 
+Every read subcommand supports `--json` (for scripting) and, where it applies,
+`--window` (e.g. `24h`, `7d`, `30d`). Run `traciumd --help` for the full list.
+
+| Command | What it shows |
+|---|---|
+| `run` | Collect forever (the daemon). |
+| `status` | Current reachability per target, gateway, and public IP. |
+| `watch` | Live terminal dashboard, refreshes in place (`--interval`, Ctrl-C to quit). |
+| `report` | Reliability + QoE over a window; `--pdf <path>` writes a PDF instead of printing. |
+| `dns` | DNS resolver comparison over a window. |
+| `wifi` | Current Wi-Fi link, if connected. |
+| `security` | Security posture: firewall, DoH/DoT, VPN, open ports. |
+| `devices` | Devices seen on the local network. |
+| `route` | Latest traceroute (per-hop latency + loss). |
+| `bandwidth` | Current rate + totals over a window. |
+| `speed` | Run a speed test now (uses data, ~30s). |
+| `events` | Recent events timeline (`--limit`). |
+| `outages` | Outage / incident log (`--limit`). |
+| `export` | CSV to stdout — `connectivity` or `events`, optional `--since-secs`. |
+
 Run it on boot as an unprivileged systemd user service:
 
 ```bash
