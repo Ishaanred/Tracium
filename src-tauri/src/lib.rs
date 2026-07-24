@@ -9,9 +9,9 @@ use std::sync::Mutex;
 
 use tracium_monitor::{now_ms, Monitor, MonitorConfig, StatusUpdate};
 use tracium_store::{
-    BandwidthNow, BandwidthTotals, ConnectivitySample, Device, DnsResolverStat, Event, NewTarget,
-    GatewaySample, InterfaceErrorsRow, Outage, QoeAverage, Reliability, Rollup, SecuritySnapshot,
-    SpeedtestRow, Store, Target, TargetStatus, TracerouteView, WifiSample,
+    BandwidthNow, BandwidthTotals, ConnectivitySample, Device, Diagnostic, DnsResolverStat, Event,
+    NewTarget, GatewaySample, InterfaceErrorsRow, Outage, QoeAverage, Reliability, Rollup,
+    SecuritySnapshot, SpeedtestRow, Store, Target, TargetStatus, TracerouteView, WifiSample,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -322,6 +322,14 @@ async fn recent_outages(state: State<'_, AppState>, limit: i64) -> Result<Vec<Ou
     state.store.recent_outages(limit).await.map_err(|e| e.to_string())
 }
 
+/// Automated diagnostics: threshold-based flags computed from data already
+/// in the store (route instability, real-vs-sleep-filtered disconnects,
+/// bufferbloat/jitter, DNS degradation). No AI involved.
+#[tauri::command]
+async fn diagnostics(state: State<'_, AppState>) -> Result<Vec<Diagnostic>, String> {
+    state.store.diagnostics(now_ms()).await.map_err(|e| e.to_string())
+}
+
 /// Export `kind` ("connectivity" | "events") over `window_secs` to a CSV file
 /// in the user's Downloads dir (falling back to the app data dir). Returns the
 /// written path. No external plugin/dialog required.
@@ -417,6 +425,7 @@ pub fn run() {
             set_isp_plan,
             recent_events,
             recent_outages,
+            diagnostics,
             export_csv
         ])
         .run(tauri::generate_context!())
