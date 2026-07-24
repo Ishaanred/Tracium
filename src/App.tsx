@@ -227,7 +227,7 @@ function fmtDur(ms: number | null | undefined): string {
   return `${(s / 3600).toFixed(1)}h`;
 }
 
-type Tab = "overview" | "connectivity" | "lan" | "routing" | "security" | "history";
+type Tab = "overview" | "connectivity" | "lan" | "routing" | "security" | "history" | "diagnostics";
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "connectivity", label: "Connectivity" },
@@ -235,6 +235,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "routing", label: "DNS & Routing" },
   { id: "security", label: "Security" },
   { id: "history", label: "History" },
+  { id: "diagnostics", label: "Diagnostics" },
 ];
 
 export default function App() {
@@ -1042,6 +1043,31 @@ export default function App() {
               ))}
             </ul>
           </>
+        )}
+      </section>
+
+      <section className="card" data-tab="diagnostics">
+        <CardTitle
+          title="Diagnostics"
+          info="Automatic checks over data Tracium already collects — route stability, real vs. sleep-filtered disconnects, bufferbloat/jitter, and DNS health. No AI involved, just thresholds."
+        />
+        {diagnostics.length === 0 ? (
+          <p className="status status--ok">No issues detected. 🎉</p>
+        ) : (
+          <ul className="events">
+            {diagnostics.map((d) => (
+              <li key={d.key} className="diag-card">
+                <span
+                  className={`dot dot--${d.severity === "bad" ? "critical" : "warn"}`}
+                  aria-hidden
+                />
+                <span className="diag-card__body">
+                  <strong className="diag-card__title">{d.title}</strong>
+                  <span className="diag-card__detail">{d.detail}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 

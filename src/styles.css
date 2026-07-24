@@ -354,6 +354,23 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.events li.diag-card {
+  align-items: flex-start;
+}
+.diag-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.diag-card__title {
+  font-weight: 600;
+}
+.diag-card__detail {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .row {
   display: flex;
   gap: 10px;
@@ -594,7 +611,8 @@ body {
 .panels[data-active="lan"] > [data-tab~="lan"],
 .panels[data-active="routing"] > [data-tab~="routing"],
 .panels[data-active="security"] > [data-tab~="security"],
-.panels[data-active="history"] > [data-tab~="history"] {
+.panels[data-active="history"] > [data-tab~="history"],
+.panels[data-active="diagnostics"] > [data-tab~="diagnostics"] {
   display: block;
 }
 /* the KPI grid must keep its grid layout when shown */
