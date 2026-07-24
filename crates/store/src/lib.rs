@@ -16,6 +16,9 @@ use sqlx::SqlitePool;
 /// Embedded migrations, compiled into the binary from `crates/store/migrations`.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
+mod diagnostics;
+pub use diagnostics::Diagnostic;
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("database error: {0}")]
