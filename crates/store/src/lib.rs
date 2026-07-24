@@ -254,24 +254,28 @@ impl Store {
 
     /// CSV export of connectivity samples with `ts >= since`.
     pub async fn export_connectivity_csv(&self, since: i64) -> Result<String> {
-        let rows = sqlx::query_as::<_, ConnectivitySample>(
-            "SELECT id, ts, target_id, ip_version, sent, received, loss_pct, \
-                    rtt_min, rtt_avg, rtt_max, rtt_jitter, up \
-             FROM connectivity_samples WHERE ts >= ? ORDER BY ts",
+        let rows = sqlx::query_as::<_, ConnectivitySampleWithTarget>(
+            "SELECT s.id, s.ts, s.target_id, t.label AS target_label, t.host AS target_host, \
+                    s.ip_version, s.sent, s.received, s.loss_pct, \
+                    s.rtt_min, s.rtt_avg, s.rtt_max, s.rtt_jitter, s.up \
+             FROM connectivity_samples s LEFT JOIN targets t ON t.id = s.target_id \
+             WHERE s.ts >= ? ORDER BY s.ts",
         )
         .bind(since)
         .fetch_all(&self.pool)
         .await?;
 
         let mut out = String::from(
-            "ts,target_id,ip_version,sent,received,loss_pct,rtt_min,rtt_avg,rtt_max,rtt_jitter,up\n",
+            "ts,target_id,target_label,target_host,ip_version,sent,received,loss_pct,rtt_min,rtt_avg,rtt_max,rtt_jitter,up\n",
         );
         for r in rows {
             let opt = |v: Option<f64>| v.map(|x| x.to_string()).unwrap_or_default();
             out.push_str(&format!(
-                "{},{},{},{},{},{},{},{},{},{},{}\n",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
                 r.ts,
                 r.target_id,
+                csv_field(r.target_label.as_deref().unwrap_or("")),
+                csv_field(r.target_host.as_deref().unwrap_or("")),
                 r.ip_version,
                 r.sent,
                 r.received,
@@ -1085,6 +1089,26 @@ pub struct NewConnectivitySample {
     pub up: bool,
 }
 
+/// A stored connectivity sample joined with its target's label/host, for CSV export.
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct ConnectivitySampleWithTarget {
+    #[allow(dead_code)]
+    pub id: i64,
+    pub ts: i64,
+    pub target_id: i64,
+    pub target_label: Option<String>,
+    pub target_host: Option<String>,
+    pub ip_version: i64,
+    pub sent: i64,
+    pub received: i64,
+    pub loss_pct: f64,
+    pub rtt_min: Option<f64>,
+    pub rtt_avg: Option<f64>,
+    pub rtt_max: Option<f64>,
+    pub rtt_jitter: Option<f64>,
+    pub up: bool,
+}
+
 /// A stored connectivity sample.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct ConnectivitySample {
@@ -1788,7 +1812,11 @@ mod tests {
         let csv = store.export_connectivity_csv(0).await.unwrap();
         let lines: Vec<&str> = csv.lines().collect();
         assert_eq!(lines.len(), 2);
-        assert!(lines[1].starts_with("500,1,4,5,5,0"));
+        assert_eq!(
+            lines[0],
+            "ts,target_id,target_label,target_host,ip_version,sent,received,loss_pct,rtt_min,rtt_avg,rtt_max,rtt_jitter,up"
+        );
+        assert!(lines[1].starts_with("500,1,Cloudflare,1.1.1.1,4,5,5,0"));
     }
 
     #[tokio::test]
