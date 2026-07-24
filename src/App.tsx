@@ -158,6 +158,14 @@ interface Reliability {
   disconnects: number;
 }
 
+interface Diagnostic {
+  key: string;
+  severity: string;
+  title: string;
+  summary: string;
+  detail: string;
+}
+
 interface TargetStatus {
   id: number;
   label: string;
@@ -251,6 +259,7 @@ export default function App() {
   const [targetStatus, setTargetStatus] = useState<TargetStatus[]>([]);
   const [events, setEvents] = useState<NetEvent[]>([]);
   const [outages, setOutages] = useState<Outage[]>([]);
+  const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([]);
   const [speedHistory, setSpeedHistory] = useState<Speedtest[]>([]);
   const [dns, setDns] = useState<DnsStat[]>([]);
   const [dnsCacheHit, setDnsCacheHit] = useState<number | null>(null);
@@ -374,6 +383,7 @@ export default function App() {
       })
       .catch(() => {});
     invoke<Outage[]>("recent_outages", { limit: 20 }).then(setOutages).catch(() => {});
+    invoke<Diagnostic[]>("diagnostics").then(setDiagnostics).catch(() => {});
     invoke<IspPlan | null>("get_isp_plan")
       .then((p) => {
         setIspPlan(p);
@@ -460,6 +470,7 @@ export default function App() {
             </button>
           )}
         </span>
+        <DiagnosticsPill diagnostics={diagnostics} onOpen={() => setTab("diagnostics")} />
         <button
           className="icon-btn"
           title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
@@ -1176,6 +1187,31 @@ function Info({ text }: { text: string }) {
       </span>
       <span className="tip__bubble" role="tooltip">
         {text}
+      </span>
+    </span>
+  );
+}
+
+/** Header badge shown only when automated diagnostics are active. */
+function DiagnosticsPill({
+  diagnostics,
+  onOpen,
+}: {
+  diagnostics: Diagnostic[];
+  onOpen: () => void;
+}) {
+  if (diagnostics.length === 0) return null;
+  return (
+    <span className="diag-pill" tabIndex={0}>
+      <button className="diag-pill__trigger" onClick={onOpen}>
+        ⚠ {diagnostics.length} issue{diagnostics.length === 1 ? "" : "s"}
+      </button>
+      <span className="diag-pill__list" role="tooltip">
+        {diagnostics.map((d) => (
+          <button key={d.key} className="diag-pill__item" onClick={onOpen}>
+            {d.summary}
+          </button>
+        ))}
       </span>
     </span>
   );

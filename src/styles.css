@@ -493,6 +493,65 @@ body {
   color: var(--accent);
 }
 
+.diag-pill {
+  position: relative;
+  display: inline-flex;
+}
+.diag-pill__trigger {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.diag-pill__trigger:hover {
+  background: color-mix(in srgb, var(--warn) 26%, transparent);
+}
+.diag-pill__list {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  background: var(--elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+  z-index: 30;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.diag-pill:hover .diag-pill__list,
+.diag-pill:focus-within .diag-pill__list {
+  opacity: 1;
+  pointer-events: auto;
+}
+.diag-pill__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+.diag-pill__item:hover {
+  background: var(--card);
+}
+
 /* Tab navigation */
 .tabs {
   position: sticky;
