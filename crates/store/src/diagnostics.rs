@@ -27,6 +27,7 @@ const DNS_SLOW_THRESHOLD_MS: f64 = 100.0;
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Diagnostic {
     pub key: String,
+    /// "warn" or "bad" — "bad" is reserved for future use; no current check emits it.
     pub severity: String,
     pub title: String,
     pub summary: String,

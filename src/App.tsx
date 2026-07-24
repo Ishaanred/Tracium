@@ -1228,7 +1228,7 @@ function DiagnosticsPill({
 }) {
   if (diagnostics.length === 0) return null;
   return (
-    <span className="diag-pill" tabIndex={0}>
+    <span className="diag-pill">
       <button className="diag-pill__trigger" onClick={onOpen}>
         <span aria-hidden>⚠</span> {diagnostics.length} issue{diagnostics.length === 1 ? "" : "s"}
       </button>
