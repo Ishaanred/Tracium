@@ -24,3 +24,6 @@ src-tauri/binaries/
 # OS / editor
 .DS_Store
 *.log
+
+# Local git worktrees (superpowers:using-git-worktrees)
+.worktrees/
