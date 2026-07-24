@@ -163,6 +163,89 @@ pub(crate) fn check_dns_degraded(stats: &[DnsResolverStat]) -> Option<Diagnostic
     })
 }
 
+impl crate::Store {
+    /// Count of `connectivity_samples` rows with `ts` in `[from, to]`
+    /// (inclusive). Used to distinguish a real outage (continuous failed
+    /// probing) from a sleep/resume gap (almost no samples at all).
+    pub async fn sample_count_between(&self, from: i64, to: i64) -> crate::Result<i64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM connectivity_samples WHERE ts >= ? AND ts <= ?",
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(n)
+    }
+
+    async fn count_events_since(&self, since: i64, kind: &str) -> crate::Result<i64> {
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM events WHERE kind = ? AND ts >= ?")
+            .bind(kind)
+            .bind(since)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(n)
+    }
+
+    /// Count of outages starting at or after `since` that are closed and
+    /// classified as real (not a sleep/resume gap) via
+    /// [`classify_real_outage`].
+    async fn real_outage_count(&self, since: i64) -> crate::Result<i64> {
+        let outages = sqlx::query_as::<_, crate::Outage>(
+            "SELECT id, ts_start, ts_end, duration_ms, reconnect_ms, cause \
+             FROM outages WHERE ts_start >= ? AND ts_end IS NOT NULL ORDER BY ts_start DESC",
+        )
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut real = 0;
+        for o in &outages {
+            let (Some(duration_ms), Some(ts_end)) = (o.duration_ms, o.ts_end) else { continue };
+            let actual = self.sample_count_between(o.ts_start, ts_end).await?;
+            if classify_real_outage(duration_ms, actual) {
+                real += 1;
+            }
+        }
+        Ok(real)
+    }
+
+    /// Run all automated diagnostics checks against the current state of the
+    /// store. Each check independently returns zero or one flag; missing
+    /// preconditions (e.g. no traceroute yet) simply produce no flag, never
+    /// an error.
+    pub async fn diagnostics(&self, now: i64) -> crate::Result<Vec<Diagnostic>> {
+        let mut out = Vec::new();
+
+        let trace = self.latest_traceroute().await?;
+        let route_change_count = self
+            .count_events_since(now - ROUTE_CHANGE_WINDOW_MS, "route_change")
+            .await?;
+        if let Some(d) = check_route_instability(trace.as_ref(), route_change_count) {
+            out.push(d);
+        }
+
+        let real_outages = self.real_outage_count(now - OUTAGE_WINDOW_MS).await?;
+        if let Some(d) = check_frequent_disconnects(real_outages) {
+            out.push(d);
+        }
+
+        let latest_speedtest = self.speedtest_history(1).await?;
+        let jitter_rel = self.reliability_since(now - JITTER_WINDOW_MS).await?;
+        if let Some(d) = check_bufferbloat_jitter(latest_speedtest.first(), jitter_rel.avg_jitter_ms)
+        {
+            out.push(d);
+        }
+
+        let dns_stats = self.dns_comparison(now - DNS_WINDOW_MS).await?;
+        if let Some(d) = check_dns_degraded(&dns_stats) {
+            out.push(d);
+        }
+
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +398,110 @@ mod tests {
             DnsResolverStat { resolver: "8.8.8.8".into(), avg_ms: Some(200.0), count: 10, failures: 0 },
         ];
         assert_eq!(check_dns_degraded(&stats), None);
+    }
+
+    #[tokio::test]
+    async fn diagnostics_empty_on_fresh_store() {
+        let store = crate::Store::open_in_memory().await.unwrap();
+        assert!(store.diagnostics(0).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn sample_count_between_counts_only_rows_in_range() {
+        let store = crate::Store::open_in_memory().await.unwrap();
+        store.seed_default_targets(0).await.unwrap();
+        for ts in [100, 200, 300, 999] {
+            store
+                .insert_connectivity_sample(crate::NewConnectivitySample {
+                    ts,
+                    target_id: 1,
+                    ip_version: 4,
+                    sent: 1,
+                    received: 1,
+                    loss_pct: 0.0,
+                    rtt_min: Some(1.0),
+                    rtt_avg: Some(1.0),
+                    rtt_max: Some(1.0),
+                    rtt_jitter: Some(0.0),
+                    up: true,
+                })
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.sample_count_between(100, 300).await.unwrap(), 3);
+        assert_eq!(store.sample_count_between(0, 999).await.unwrap(), 4);
+        assert_eq!(store.sample_count_between(500, 900).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn diagnostics_excludes_sleep_gapped_outages_from_frequent_disconnects() {
+        let store = crate::Store::open_in_memory().await.unwrap();
+        store.seed_default_targets(0).await.unwrap();
+
+        // Three real outages: each ~30s with samples throughout (2 samples each).
+        for base in [1_000_i64, 100_000, 200_000] {
+            let id = store.open_outage(base, None).await.unwrap();
+            store
+                .insert_connectivity_sample(crate::NewConnectivitySample {
+                    ts: base,
+                    target_id: 1,
+                    ip_version: 4,
+                    sent: 1,
+                    received: 0,
+                    loss_pct: 100.0,
+                    rtt_min: None,
+                    rtt_avg: None,
+                    rtt_max: None,
+                    rtt_jitter: None,
+                    up: false,
+                })
+                .await
+                .unwrap();
+            store
+                .insert_connectivity_sample(crate::NewConnectivitySample {
+                    ts: base + 15_000,
+                    target_id: 1,
+                    ip_version: 4,
+                    sent: 1,
+                    received: 0,
+                    loss_pct: 100.0,
+                    rtt_min: None,
+                    rtt_avg: None,
+                    rtt_max: None,
+                    rtt_jitter: None,
+                    up: false,
+                })
+                .await
+                .unwrap();
+            store.close_outage(id, base + 30_000, Some(0)).await.unwrap();
+        }
+
+        // A fourth "outage" that's actually a multi-hour sleep gap: huge
+        // duration, but only one sample exists in that whole window.
+        let sleep_id = store.open_outage(300_000, None).await.unwrap();
+        store
+            .insert_connectivity_sample(crate::NewConnectivitySample {
+                ts: 300_000,
+                target_id: 1,
+                ip_version: 4,
+                sent: 1,
+                received: 0,
+                loss_pct: 100.0,
+                rtt_min: None,
+                rtt_avg: None,
+                rtt_max: None,
+                rtt_jitter: None,
+                up: false,
+            })
+            .await
+            .unwrap();
+        store.close_outage(sleep_id, 300_000 + 7_200_000, Some(0)).await.unwrap();
+
+        let diagnostics = store.diagnostics(400_000).await.unwrap();
+        let frequent = diagnostics
+            .iter()
+            .find(|d| d.key == "frequent_disconnects")
+            .expect("3 real outages in 24h should trigger frequent_disconnects");
+        assert!(frequent.detail.contains('3'));
     }
 }
