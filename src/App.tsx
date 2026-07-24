@@ -1204,9 +1204,9 @@ function DiagnosticsPill({
   return (
     <span className="diag-pill" tabIndex={0}>
       <button className="diag-pill__trigger" onClick={onOpen}>
-        ⚠ {diagnostics.length} issue{diagnostics.length === 1 ? "" : "s"}
+        <span aria-hidden>⚠</span> {diagnostics.length} issue{diagnostics.length === 1 ? "" : "s"}
       </button>
-      <span className="diag-pill__list" role="tooltip">
+      <span className="diag-pill__list">
         {diagnostics.map((d) => (
           <button key={d.key} className="diag-pill__item" onClick={onOpen}>
             {d.summary}
