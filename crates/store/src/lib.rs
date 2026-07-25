@@ -850,11 +850,13 @@ impl Store {
         .fetch_one(&self.pool)
         .await?;
 
-        let disconnects: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM outages WHERE ts_start >= ?")
-                .bind(since)
-                .fetch_one(&self.pool)
-                .await?;
+        let disconnects: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM outages WHERE ts_start >= ? AND (cause IS NULL OR cause <> ?)",
+        )
+        .bind(since)
+        .bind(OUTAGE_CAUSE_GAP)
+        .fetch_one(&self.pool)
+        .await?;
 
         let uptime_pct = if samples > 0 {
             up_samples as f64 / samples as f64 * 100.0
@@ -1879,6 +1881,19 @@ mod tests {
 
         let r = store.reliability_since(0).await.unwrap();
         assert_eq!(r.disconnects, 1);
+    }
+
+    #[tokio::test]
+    async fn reliability_disconnects_excludes_gap_outages() {
+        let store = Store::open_in_memory().await.unwrap();
+        let real_id = store.open_outage(1000, Some(OUTAGE_CAUSE_REAL)).await.unwrap();
+        store.close_outage(real_id, 2000, Some(1000)).await.unwrap();
+
+        let gap_id = store.open_outage(3000, Some(OUTAGE_CAUSE_GAP)).await.unwrap();
+        store.close_outage(gap_id, 4000, Some(1000)).await.unwrap();
+
+        let r = store.reliability_since(0).await.unwrap();
+        assert_eq!(r.disconnects, 1, "only the real outage should count");
     }
 
     #[test]
