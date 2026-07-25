@@ -1286,6 +1286,15 @@ pub struct Event {
     pub payload: Option<String>,
 }
 
+/// An outage where every internet target was genuinely unreachable —
+/// the default `cause` an outage opens with, corrected at close time if it
+/// turns out to be a sleep/shutdown gap instead.
+pub const OUTAGE_CAUSE_REAL: &str = "all internet targets unreachable";
+/// An outage that was actually the device being asleep or off — detected by
+/// [`crate::diagnostics`]'s sample-density check at close time, not a real
+/// ISP drop.
+pub const OUTAGE_CAUSE_GAP: &str = "device was asleep/off";
+
 /// A recorded (possibly ongoing) internet outage.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct Outage {

@@ -179,6 +179,36 @@ impl crate::Store {
         Ok(n)
     }
 
+    /// Close an outage, classifying it as real ([`crate::OUTAGE_CAUSE_REAL`])
+    /// or a sleep/shutdown gap ([`crate::OUTAGE_CAUSE_GAP`]) based on how
+    /// many samples actually exist between `ts_start` and `ts_end`, and
+    /// persist that classification into `cause`. Returns `true` if
+    /// classified real, `false` if classified a gap.
+    pub async fn close_outage_classified(
+        &self,
+        id: i64,
+        ts_start: i64,
+        ts_end: i64,
+        reconnect_ms: Option<i64>,
+    ) -> crate::Result<bool> {
+        let actual = self.sample_count_between(ts_start, ts_end).await?;
+        let duration_ms = ts_end - ts_start;
+        let is_real = classify_real_outage(duration_ms, actual);
+        let cause = if is_real { crate::OUTAGE_CAUSE_REAL } else { crate::OUTAGE_CAUSE_GAP };
+        sqlx::query(
+            "UPDATE outages SET ts_end = ?, duration_ms = ? - ts_start, reconnect_ms = ?, \
+             cause = ? WHERE id = ?",
+        )
+        .bind(ts_end)
+        .bind(ts_end)
+        .bind(reconnect_ms)
+        .bind(cause)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(is_real)
+    }
+
     async fn count_events_since(&self, since: i64, kind: &str) -> crate::Result<i64> {
         let n: i64 = sqlx::query_scalar("SELECT count(*) FROM events WHERE kind = ? AND ts >= ?")
             .bind(kind)
@@ -432,6 +462,66 @@ mod tests {
         assert_eq!(store.sample_count_between(100, 300).await.unwrap(), 3);
         assert_eq!(store.sample_count_between(0, 999).await.unwrap(), 4);
         assert_eq!(store.sample_count_between(500, 900).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn close_outage_classified_marks_real_outage() {
+        let store = crate::Store::open_in_memory().await.unwrap();
+        store.seed_default_targets(0).await.unwrap();
+        let id = store.open_outage(1000, Some(crate::OUTAGE_CAUSE_REAL)).await.unwrap();
+        // Two samples across the 30s span => classified real.
+        store
+            .insert_connectivity_sample(crate::NewConnectivitySample {
+                ts: 1000,
+                target_id: 1,
+                ip_version: 4,
+                sent: 1,
+                received: 0,
+                loss_pct: 100.0,
+                rtt_min: None,
+                rtt_avg: None,
+                rtt_max: None,
+                rtt_jitter: None,
+                up: false,
+            })
+            .await
+            .unwrap();
+        store
+            .insert_connectivity_sample(crate::NewConnectivitySample {
+                ts: 16_000,
+                target_id: 1,
+                ip_version: 4,
+                sent: 1,
+                received: 0,
+                loss_pct: 100.0,
+                rtt_min: None,
+                rtt_avg: None,
+                rtt_max: None,
+                rtt_jitter: None,
+                up: false,
+            })
+            .await
+            .unwrap();
+
+        let is_real = store.close_outage_classified(id, 1000, 31_000, Some(0)).await.unwrap();
+        assert!(is_real);
+
+        let outages = store.recent_outages(1).await.unwrap();
+        assert_eq!(outages[0].cause.as_deref(), Some(crate::OUTAGE_CAUSE_REAL));
+    }
+
+    #[tokio::test]
+    async fn close_outage_classified_marks_gap_outage() {
+        let store = crate::Store::open_in_memory().await.unwrap();
+        store.seed_default_targets(0).await.unwrap();
+        let id = store.open_outage(1000, Some(crate::OUTAGE_CAUSE_REAL)).await.unwrap();
+        // No samples at all across a 2-hour span => classified a gap.
+        let is_real =
+            store.close_outage_classified(id, 1000, 1000 + 7_200_000, Some(0)).await.unwrap();
+        assert!(!is_real);
+
+        let outages = store.recent_outages(1).await.unwrap();
+        assert_eq!(outages[0].cause.as_deref(), Some(crate::OUTAGE_CAUSE_GAP));
     }
 
     #[tokio::test]
