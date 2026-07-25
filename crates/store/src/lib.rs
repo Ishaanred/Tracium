@@ -850,13 +850,11 @@ impl Store {
         .fetch_one(&self.pool)
         .await?;
 
-        let disconnects: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM outages WHERE ts_start >= ? AND (cause IS NULL OR cause <> ?)",
-        )
-        .bind(since)
-        .bind(OUTAGE_CAUSE_GAP)
-        .fetch_one(&self.pool)
-        .await?;
+        let disconnects: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM outages WHERE ts_start >= ?")
+                .bind(since)
+                .fetch_one(&self.pool)
+                .await?;
 
         let uptime_pct = if samples > 0 {
             up_samples as f64 / samples as f64 * 100.0

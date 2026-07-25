@@ -678,10 +678,6 @@ mod tests {
         let outages = store.recent_outages(1).await.unwrap();
         assert_eq!(outages[0].cause.as_deref(), Some(OUTAGE_CAUSE_GAP));
 
-        // Not counted as a real disconnect.
-        let r = store.reliability_since(0).await.unwrap();
-        assert_eq!(r.disconnects, 0);
-
         // The Timeline's disconnect event reflects the gap, not a critical alarm.
         let events = store.recent_events(10).await.unwrap();
         let disconnect = events.iter().find(|e| e.kind == "disconnect").expect("disconnect event");
