@@ -21,7 +21,7 @@ use tracium_probe::{
 };
 use tracium_store::{
     NewConnectivitySample, SecuritySnapshot, Store, StoreError, TracerouteHop, WifiSample,
-    OUTAGE_CAUSE_GAP, OUTAGE_CAUSE_REAL,
+    OUTAGE_CAUSE_REAL,
 };
 
 /// Resolvers compared on the DNS cadence (label, IP).
@@ -550,7 +550,7 @@ pub fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracium_store::NewTarget;
+    use tracium_store::{NewTarget, OUTAGE_CAUSE_GAP};
     use tokio::net::TcpListener;
 
     fn cfg(port: u16) -> MonitorConfig {
@@ -665,6 +665,10 @@ mod tests {
         let down = Monitor::new(store.clone(), cfg(dead_port));
         let u1 = down.tick(1000).await.unwrap();
         assert!(u1.outage_ongoing);
+        assert!(
+            store.recent_events(10).await.unwrap().iter().all(|e| e.kind != "disconnect"),
+            "no Timeline entry until the outage closes"
+        );
 
         // Cycle 2: up, but 2 hours later with no cycles in between — simulates
         // a suspend/shutdown gap, not a real multi-hour outage.
@@ -682,5 +686,6 @@ mod tests {
         let events = store.recent_events(10).await.unwrap();
         let disconnect = events.iter().find(|e| e.kind == "disconnect").expect("disconnect event");
         assert_eq!(disconnect.severity, "info");
+        assert_eq!(disconnect.ts, 1000, "disconnect is backdated to outage start");
     }
 }

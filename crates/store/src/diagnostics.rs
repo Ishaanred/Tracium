@@ -251,10 +251,10 @@ impl crate::Store {
     /// wrote, rather than recomputing it.
     async fn real_outage_count(&self, since: i64) -> crate::Result<i64> {
         let n: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM outages WHERE ts_start >= ? AND ts_end IS NOT NULL AND cause = ?",
+            "SELECT count(*) FROM outages WHERE ts_start >= ? AND ts_end IS NOT NULL AND (cause IS NULL OR cause <> ?)",
         )
         .bind(since)
-        .bind(crate::OUTAGE_CAUSE_REAL)
+        .bind(crate::OUTAGE_CAUSE_GAP)
         .fetch_one(&self.pool)
         .await?;
         Ok(n)
