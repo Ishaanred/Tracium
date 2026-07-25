@@ -23,6 +23,8 @@ const JITTER_THRESHOLD_MS: f64 = 20.0;
 const DNS_WINDOW_MS: i64 = 60 * 60 * 1000;
 const DNS_SLOW_THRESHOLD_MS: f64 = 100.0;
 
+const ROUTE_CHANGE_GAP_BUFFER_MS: i64 = 2 * 60 * 1000; // 2 minutes
+
 /// A threshold-triggered flag surfaced in the GUI's Diagnostics tab.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Diagnostic {
@@ -209,36 +211,53 @@ impl crate::Store {
         Ok(is_real)
     }
 
-    async fn count_events_since(&self, since: i64, kind: &str) -> crate::Result<i64> {
-        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM events WHERE kind = ? AND ts >= ?")
-            .bind(kind)
-            .bind(since)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(n)
-    }
-
-    /// Count of outages starting at or after `since` that are closed and
-    /// classified as real (not a sleep/resume gap) via
-    /// [`classify_real_outage`].
-    async fn real_outage_count(&self, since: i64) -> crate::Result<i64> {
-        let outages = sqlx::query_as::<_, crate::Outage>(
-            "SELECT id, ts_start, ts_end, duration_ms, reconnect_ms, cause \
-             FROM outages WHERE ts_start >= ? AND ts_end IS NOT NULL ORDER BY ts_start DESC",
+    /// Count of `route_change` events since `since`, excluding any that fall
+    /// within [`ROUTE_CHANGE_GAP_BUFFER_MS`] of a GAP-classified outage — a
+    /// reboot/wake almost always fires one spurious route change on its own.
+    async fn route_change_count_excluding_gaps(&self, since: i64) -> crate::Result<i64> {
+        let events: Vec<i64> = sqlx::query_scalar(
+            "SELECT ts FROM events WHERE kind = 'route_change' AND ts >= ?",
         )
         .bind(since)
         .fetch_all(&self.pool)
         .await?;
 
-        let mut real = 0;
-        for o in &outages {
-            let (Some(duration_ms), Some(ts_end)) = (o.duration_ms, o.ts_end) else { continue };
-            let actual = self.sample_count_between(o.ts_start, ts_end).await?;
-            if classify_real_outage(duration_ms, actual) {
-                real += 1;
-            }
-        }
-        Ok(real)
+        let gaps: Vec<(i64, Option<i64>)> = sqlx::query_as(
+            "SELECT ts_start, ts_end FROM outages \
+             WHERE cause = ? AND ts_end IS NOT NULL AND ts_end >= ?",
+        )
+        .bind(crate::OUTAGE_CAUSE_GAP)
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?;
+        let gap_ranges: Vec<(i64, i64)> =
+            gaps.into_iter().filter_map(|(start, end)| end.map(|e| (start, e))).collect();
+
+        let count = events
+            .into_iter()
+            .filter(|ts| {
+                !gap_ranges.iter().any(|(gap_start, gap_end)| {
+                    *ts >= gap_start - ROUTE_CHANGE_GAP_BUFFER_MS
+                        && *ts <= gap_end + ROUTE_CHANGE_GAP_BUFFER_MS
+                })
+            })
+            .count() as i64;
+        Ok(count)
+    }
+
+    /// Count of outages starting at or after `since` that are closed and
+    /// persisted as real (not a sleep/shutdown gap) — reads the
+    /// classification [`crate::Store::close_outage_classified`] already
+    /// wrote, rather than recomputing it.
+    async fn real_outage_count(&self, since: i64) -> crate::Result<i64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM outages WHERE ts_start >= ? AND ts_end IS NOT NULL AND cause = ?",
+        )
+        .bind(since)
+        .bind(crate::OUTAGE_CAUSE_REAL)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(n)
     }
 
     /// Run all automated diagnostics checks against the current state of the
@@ -250,7 +269,7 @@ impl crate::Store {
 
         let trace = self.latest_traceroute().await?;
         let route_change_count = self
-            .count_events_since(now - ROUTE_CHANGE_WINDOW_MS, "route_change")
+            .route_change_count_excluding_gaps(now - ROUTE_CHANGE_WINDOW_MS)
             .await?;
         if let Some(d) = check_route_instability(trace.as_ref(), route_change_count) {
             out.push(d);
@@ -465,6 +484,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn route_change_excludes_events_near_a_gap_outage() {
+        let store = crate::Store::open_in_memory().await.unwrap();
+        // A gap-classified outage from ts=100_000 to ts=200_000 (no samples
+        // inserted in that range, so it classifies as a gap).
+        let id = store.open_outage(100_000, Some(crate::OUTAGE_CAUSE_REAL)).await.unwrap();
+        store.close_outage_classified(id, 100_000, 200_000, Some(0)).await.unwrap();
+
+        // Just inside the gap's buffer window -> excluded.
+        store.insert_event(260_000, "route_change", "warn", None, None).await.unwrap();
+        // Clearly outside it -> still counts.
+        store.insert_event(500_000, "route_change", "warn", None, None).await.unwrap();
+
+        let n = store.route_change_count_excluding_gaps(0).await.unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[tokio::test]
     async fn close_outage_classified_marks_real_outage() {
         let store = crate::Store::open_in_memory().await.unwrap();
         store.seed_default_targets(0).await.unwrap();
@@ -531,7 +567,7 @@ mod tests {
 
         // Three real outages: each ~30s with samples throughout (2 samples each).
         for base in [1_000_i64, 100_000, 200_000] {
-            let id = store.open_outage(base, None).await.unwrap();
+            let id = store.open_outage(base, Some(crate::OUTAGE_CAUSE_REAL)).await.unwrap();
             store
                 .insert_connectivity_sample(crate::NewConnectivitySample {
                     ts: base,
@@ -564,12 +600,12 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            store.close_outage(id, base + 30_000, Some(0)).await.unwrap();
+            store.close_outage_classified(id, base, base + 30_000, Some(0)).await.unwrap();
         }
 
         // A fourth "outage" that's actually a multi-hour sleep gap: huge
         // duration, but only one sample exists in that whole window.
-        let sleep_id = store.open_outage(300_000, None).await.unwrap();
+        let sleep_id = store.open_outage(300_000, Some(crate::OUTAGE_CAUSE_REAL)).await.unwrap();
         store
             .insert_connectivity_sample(crate::NewConnectivitySample {
                 ts: 300_000,
@@ -586,7 +622,10 @@ mod tests {
             })
             .await
             .unwrap();
-        store.close_outage(sleep_id, 300_000 + 7_200_000, Some(0)).await.unwrap();
+        store
+            .close_outage_classified(sleep_id, 300_000, 300_000 + 7_200_000, Some(0))
+            .await
+            .unwrap();
 
         let diagnostics = store.diagnostics(400_000).await.unwrap();
         let frequent = diagnostics
