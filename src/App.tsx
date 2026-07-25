@@ -179,6 +179,7 @@ interface TargetStatus {
 
 const DAY_SECS = 24 * 60 * 60;
 const QOE_WINDOW_SECS = 30 * 60; // smooth QoE over the last 30 minutes
+const OUTAGE_CAUSE_GAP = "device was asleep/off";
 
 // Trend ranges: 24h uses hourly rollups; 7d/30d use daily rollups (which persist
 // past raw-sample retention, unlike week/month buckets computed from raw).
@@ -1026,21 +1027,39 @@ export default function App() {
           <p className="status status--ok">No outages recorded. 🎉</p>
         ) : (
           <>
-            <p className="status" style={{ marginBottom: 10, fontSize: 12 }}>
-              longest outage:{" "}
-              {fmtDur(Math.max(...outages.map((o) => o.duration_ms ?? 0)))} · {outages.length} total
-            </p>
+            {(() => {
+              const real = outages.filter((o) => o.cause !== OUTAGE_CAUSE_GAP);
+              return real.length === 0 ? (
+                <p className="status status--ok" style={{ marginBottom: 10, fontSize: 12 }}>
+                  No real outages — {outages.length} sleep/shutdown gap
+                  {outages.length === 1 ? "" : "s"} excluded.
+                </p>
+              ) : (
+                <p className="status" style={{ marginBottom: 10, fontSize: 12 }}>
+                  longest outage:{" "}
+                  {fmtDur(Math.max(...real.map((o) => o.duration_ms ?? 0)))} · {real.length} total
+                </p>
+              );
+            })()}
             <ul className="events">
-              {outages.map((o) => (
-                <li key={o.id}>
-                  <span className={`dot dot--${o.ts_end == null ? "critical" : "warn"}`} aria-hidden />
-                  <span className="events__kind">{fmtDur(o.duration_ms)}</span>
-                  {o.reconnect_ms != null && (
-                    <span className="events__dur">recovered in {fmtDur(o.reconnect_ms)}</span>
-                  )}
-                  <span className="events__time">{new Date(o.ts_start).toLocaleString()}</span>
-                </li>
-              ))}
+              {outages.map((o) => {
+                const isGap = o.cause === OUTAGE_CAUSE_GAP;
+                return (
+                  <li key={o.id}>
+                    <span
+                      className={`dot dot--${isGap ? "info" : o.ts_end == null ? "critical" : "warn"}`}
+                      aria-hidden
+                    />
+                    <span className="events__kind">
+                      {isGap ? "Device was asleep/off" : fmtDur(o.duration_ms)}
+                    </span>
+                    {!isGap && o.reconnect_ms != null && (
+                      <span className="events__dur">recovered in {fmtDur(o.reconnect_ms)}</span>
+                    )}
+                    <span className="events__time">{new Date(o.ts_start).toLocaleString()}</span>
+                  </li>
+                );
+              })}
             </ul>
           </>
         )}
