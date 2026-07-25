@@ -21,6 +21,7 @@ use tracium_probe::{
 };
 use tracium_store::{
     NewConnectivitySample, SecuritySnapshot, Store, StoreError, TracerouteHop, WifiSample,
+    OUTAGE_CAUSE_GAP, OUTAGE_CAUSE_REAL,
 };
 
 /// Resolvers compared on the DNS cadence (label, IP).
@@ -411,16 +412,25 @@ impl Monitor {
     }
 
     /// Open an outage when everything drops, close it when anything recovers.
+    /// Classification (real vs. sleep/shutdown gap) can only be known once
+    /// the outage closes, so both the `disconnect` and `reconnect` Timeline
+    /// events are written at close time, not open time.
     async fn update_outage(&self, now: i64, online: bool, all_down: bool) -> Result<(), StoreError> {
         let open = self.store.current_open_outage().await?;
         match (open, all_down, online) {
             (None, true, _) => {
-                self.store.open_outage(now, Some("all internet targets unreachable")).await?;
-                self.store.insert_event(now, "disconnect", "critical", None, None).await?;
+                self.store.open_outage(now, Some(OUTAGE_CAUSE_REAL)).await?;
             }
             (Some(o), _, true) => {
                 let reconnect = now - o.ts_start;
-                self.store.close_outage(o.id, now, Some(reconnect)).await?;
+                let is_real = self
+                    .store
+                    .close_outage_classified(o.id, o.ts_start, now, Some(reconnect))
+                    .await?;
+                let disconnect_severity = if is_real { "critical" } else { "info" };
+                self.store
+                    .insert_event(o.ts_start, "disconnect", disconnect_severity, None, None)
+                    .await?;
                 self.store.insert_event(now, "reconnect", "info", Some(reconnect), None).await?;
             }
             _ => {}
@@ -639,5 +649,42 @@ mod tests {
         let r = store.reliability_since(0).await.unwrap();
         assert_eq!(r.disconnects, 1);
         assert_eq!(r.samples, 2);
+    }
+
+    #[tokio::test]
+    async fn outage_closes_as_gap_when_mostly_no_samples_in_range() {
+        // A port nothing listens on -> every probe fails.
+        let dead = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let dead_port = dead.local_addr().unwrap().port();
+        drop(dead);
+
+        let store = Store::open_in_memory().await.unwrap();
+        add_local_target(&store, "127.0.0.1").await;
+
+        // Cycle 1: down at ts=1000 -> outage opens.
+        let down = Monitor::new(store.clone(), cfg(dead_port));
+        let u1 = down.tick(1000).await.unwrap();
+        assert!(u1.outage_ongoing);
+
+        // Cycle 2: up, but 2 hours later with no cycles in between — simulates
+        // a suspend/shutdown gap, not a real multi-hour outage.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let live_port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { while listener.accept().await.is_ok() {} });
+        let up = Monitor::new(store.clone(), cfg(live_port));
+        let u2 = up.tick(1000 + 7_200_000).await.unwrap();
+        assert!(u2.online);
+
+        let outages = store.recent_outages(1).await.unwrap();
+        assert_eq!(outages[0].cause.as_deref(), Some(OUTAGE_CAUSE_GAP));
+
+        // Not counted as a real disconnect.
+        let r = store.reliability_since(0).await.unwrap();
+        assert_eq!(r.disconnects, 0);
+
+        // The Timeline's disconnect event reflects the gap, not a critical alarm.
+        let events = store.recent_events(10).await.unwrap();
+        let disconnect = events.iter().find(|e| e.kind == "disconnect").expect("disconnect event");
+        assert_eq!(disconnect.severity, "info");
     }
 }
