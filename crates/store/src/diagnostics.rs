@@ -34,6 +34,10 @@ pub struct Diagnostic {
     pub title: String,
     pub summary: String,
     pub detail: String,
+    /// Hop number this diagnostic is about, when applicable (e.g.
+    /// `route_instability`). Lets the GUI cross-reference a hop's loss
+    /// against trend-confirmed history, not just a single traceroute snapshot.
+    pub hop_no: Option<i64>,
 }
 
 pub(crate) fn classify_real_outage(duration_ms: i64, actual_samples: i64) -> bool {
@@ -77,6 +81,7 @@ pub(crate) fn check_route_instability(
             target = trace.target,
             hop_no = hop.hop_no,
         ),
+        hop_no: Some(hop.hop_no),
     })
 }
 
@@ -94,6 +99,7 @@ pub(crate) fn check_frequent_disconnects(real_outage_count: i64) -> Option<Diagn
              drops (continuous failed probes throughout), not just your device sleeping. This is \
              more than the occasional blip and is worth raising with your ISP.",
         ),
+        hop_no: None,
     })
 }
 
@@ -126,6 +132,7 @@ pub(crate) fn check_bufferbloat_jitter(
             "{summary}. This causes choppy calls and rubber-banding in games even when the \
              connection is technically \"up\" — often fixable with QoS/SQM on your router.",
         ),
+        hop_no: None,
     })
 }
 
@@ -163,6 +170,7 @@ pub(crate) fn check_dns_degraded(stats: &[DnsResolverStat]) -> Option<Diagnostic
             "Over the last hour: {breakdown}. Slow or failing DNS lookups add delay before every \
              new connection, which can look like general page-load lag.",
         ),
+        hop_no: None,
     })
 }
 
@@ -366,6 +374,7 @@ mod tests {
         let d = check_route_instability(Some(&t), 4).expect("should fire");
         assert_eq!(d.key, "route_instability");
         assert_eq!(d.severity, "warn");
+        assert_eq!(d.hop_no, Some(6));
         assert!(d.detail.contains("1.1.1.1"));
         assert!(d.detail.contains("40"));
     }

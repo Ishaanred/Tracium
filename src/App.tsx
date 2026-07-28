@@ -164,6 +164,7 @@ interface Diagnostic {
   title: string;
   summary: string;
   detail: string;
+  hop_no: number | null;
 }
 
 interface TargetStatus {
@@ -977,19 +978,37 @@ export default function App() {
         </h2>
         {trace && trace.hops.length > 0 ? (
           <ul className="hops">
-            {trace.hops.map((h) => (
-              <li key={h.hop_no}>
-                <span className="hops__no">{h.hop_no}</span>
-                <span className="hops__ip">{h.ip ?? "* (no reply)"}</span>
-                {h.as_name && <span className="hops__as">{h.as_name.split(/[-,]/)[0].trim()}</span>}
-                {h.loss_pct != null && h.loss_pct > 0 && (
-                  <span className="hops__loss" style={{ color: h.loss_pct >= 50 ? "var(--bad)" : "var(--warn)" }}>
-                    {h.loss_pct.toFixed(0)}% loss
-                  </span>
-                )}
-                <span className="hops__rtt">{h.rtt_ms != null ? `${h.rtt_ms.toFixed(1)} ms` : ""}</span>
-              </li>
-            ))}
+            {trace.hops.map((h, i) => {
+              const hasLoss = h.loss_pct != null && h.loss_pct > 0;
+              // Loss only points to real trouble if it continues through to the
+              // destination; a lone silent hop is usually a router that just
+              // doesn't reply to traceroute probes, not a broken path.
+              const persists =
+                hasLoss && trace.hops.slice(i).every((hop) => hop.loss_pct != null && hop.loss_pct > 0);
+              // `route_instability` only fires once loss at this hop has held up across
+              // repeated route-change checks over the last 6h — a single traceroute
+              // snapshot hasn't earned that yet, so say so rather than implying it has.
+              const confirmedByTrend = diagnostics.some(
+                (d) => d.key === "route_instability" && d.hop_no === h.hop_no,
+              );
+              return (
+                <li key={h.hop_no}>
+                  <span className="hops__no">{h.hop_no}</span>
+                  <span className="hops__ip">{h.ip ?? "* (no reply)"}</span>
+                  {h.as_name && <span className="hops__as">{h.as_name.split(/[-,]/)[0].trim()}</span>}
+                  {hasLoss &&
+                    (persists ? (
+                      <span className="hops__loss" style={{ color: h.loss_pct! >= 50 ? "var(--bad)" : "var(--warn)" }}>
+                        {h.loss_pct!.toFixed(0)}% loss
+                        {confirmedByTrend ? " · confirmed by trend" : " · single check"}
+                      </span>
+                    ) : (
+                      <span className="hops__loss hops__loss--muted">no reply (likely benign)</span>
+                    ))}
+                  <span className="hops__rtt">{h.rtt_ms != null ? `${h.rtt_ms.toFixed(1)} ms` : ""}</span>
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <p className="status">
