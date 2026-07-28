@@ -974,7 +974,7 @@ export default function App() {
       <section className="card" data-tab="routing">
         <h2>
           Route{trace ? ` to ${trace.target} · ${trace.hop_count} hops` : ""}
-          <Info text="The path your packets take to reach the target, hop by hop: the network (AS) each hop belongs to, round-trip time, and packet loss (5 probes/hop). Loss that starts at a hop and continues points to where the trouble is; the AS shows which ISP/provider carries each leg." />
+          <Info text="The path your packets take to reach the target, hop by hop: the network (AS) each hop belongs to, round-trip time, and packet loss (5 probes/hop). A single hop with no reply is usually harmless — many routers rate-limit or ignore traceroute probes while still forwarding your traffic normally. Loss that starts at a hop and continues through to the destination is the real signal; the AS shows which ISP/provider carries each leg." />
         </h2>
         {trace && trace.hops.length > 0 ? (
           <ul className="hops">
