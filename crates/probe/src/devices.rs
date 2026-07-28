@@ -14,11 +14,18 @@ pub struct ArpEntry {
 }
 
 /// Discover LAN devices from the OS ARP cache.
+///
+/// On Linux, `/proc/net/arp` is system-wide — it includes every Docker/VM
+/// bridge network's neighbour table too (`br-*`, `docker0`, `veth*`), which
+/// churn through disposable MACs and would otherwise drown out real LAN
+/// devices. We restrict results to the machine's default route interface
+/// (e.g. `eth0`/`wlan0`), the one actually facing the LAN.
 pub async fn discover_devices() -> Vec<ArpEntry> {
     #[cfg(target_os = "linux")]
     {
+        let default_iface = netdev::get_default_interface().ok().map(|i| i.name);
         std::fs::read_to_string("/proc/net/arp")
-            .map(|t| parse_proc_net_arp(&t))
+            .map(|t| parse_proc_net_arp(&t, default_iface.as_deref()))
             .unwrap_or_default()
     }
     #[cfg(target_os = "windows")]
@@ -40,18 +47,24 @@ fn is_bogus_mac(mac: &str) -> bool {
     m == "00:00:00:00:00:00" || m == "ff:ff:ff:ff:ff:ff" || m.is_empty()
 }
 
-/// Parse Linux `/proc/net/arp`.
-pub fn parse_proc_net_arp(text: &str) -> Vec<ArpEntry> {
+/// Parse Linux `/proc/net/arp`. When `iface` is given, only entries on that
+/// device are kept — see [`discover_devices`] for why.
+pub fn parse_proc_net_arp(text: &str, iface: Option<&str>) -> Vec<ArpEntry> {
     let mut out = Vec::new();
     for line in text.lines().skip(1) {
         // IP  HWtype  Flags  HWaddress  Mask  Device
         let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() < 4 {
+        if cols.len() < 6 {
             continue;
         }
         // Flags 0x0 => incomplete entry; skip.
         if cols[2] == "0x0" {
             continue;
+        }
+        if let Some(want) = iface {
+            if cols[5] != want {
+                continue;
+            }
         }
         let (ip, mac) = (cols[0], cols[3]);
         if is_bogus_mac(mac) {
@@ -94,9 +107,22 @@ IP address       HW type     Flags       HW address            Mask     Device
 192.168.1.1      0x1         0x2         aa:bb:cc:dd:ee:ff     *        wlan0
 192.168.1.42     0x1         0x2         11:22:33:44:55:66     *        wlan0
 192.168.1.99     0x1         0x0         00:00:00:00:00:00     *        wlan0";
-        let d = parse_proc_net_arp(sample);
+        let d = parse_proc_net_arp(sample, None);
         assert_eq!(d.len(), 2, "incomplete entry should be skipped");
         assert_eq!(d[0], ArpEntry { ip: "192.168.1.1".into(), mac: "aa:bb:cc:dd:ee:ff".into() });
+    }
+
+    #[test]
+    fn filters_to_the_given_interface() {
+        // Docker bridge neighbours (br-*) should be excluded when we ask for
+        // the real LAN interface only.
+        let sample = "\
+IP address       HW type     Flags       HW address            Mask     Device
+192.168.1.1      0x1         0x2         aa:bb:cc:dd:ee:ff     *        enp8s0
+172.18.0.3       0x1         0x2         f2:83:d0:5d:0a:c2     *        br-fbb094e3a367";
+        let d = parse_proc_net_arp(sample, Some("enp8s0"));
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].ip, "192.168.1.1");
     }
 
     #[test]
