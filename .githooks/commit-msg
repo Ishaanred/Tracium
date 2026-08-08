@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Strips any Claude/Anthropic co-author trailer before a commit is finalized,
+# so AI assistance never gets attributed as a repo contributor.
+# Enable with: git config core.hooksPath .githooks
+sed -i.bak '/^Co-Authored-By:.*\(claude\|anthropic\.com\)/Id' "$1"
+rm -f "$1.bak"

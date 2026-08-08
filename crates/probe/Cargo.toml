@@ -1,0 +1,22 @@
+[package]
+name = "tracium-probe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tracium connectivity probing: unprivileged TCP-connect latency/jitter/loss."
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hickory-resolver = "0.24"
+ureq = "2"
+sysinfo = { version = "0.32", default-features = false, features = ["network"] }
+netdev = "0.45"
+csnmp = "0.5"
+stunclient = "0.4"
+igd-next = { version = "0.17", features = ["aio_tokio"] }
+
+[dev-dependencies]
+tokio = { workspace = true }

@@ -1,0 +1,72 @@
+name: Release
+
+# Push a tag like v0.1.0 to build + publish a DRAFT GitHub Release.
+# Linux-only for now (Windows is experimental/untested — tracked separately).
+# One job owns the release: tauri-action creates the draft + uploads the desktop
+# bundles, then we append the daemon binary with `gh` (no two-actions race).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev librsvg2-dev libayatana-appindicator3-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Fetch bundled sidecars (librespeed-cli)
+        run: bash scripts/fetch-sidecars.sh
+
+      - name: Build headless daemon
+        run: cargo build --release -p tracium-cli
+
+      - name: Build desktop bundles + create draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Tracium ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: false
+          releaseBody: |
+            Tracium — a lightweight desktop + headless network monitor.
+
+            **Linux release.** (Windows is experimental and not yet built here.)
+
+            Downloads:
+            - Desktop app (tray GUI): `.deb` / `.rpm` / `.AppImage`
+            - Headless daemon: `traciumd-linux-x86_64` — run as a systemd user
+              service (see packaging/systemd/tracium.service)
+
+            The `.deb` pulls in `traceroute`, `iw`, `iputils-ping`; the speed-test
+            engine (librespeed-cli) is bundled.
+
+      - name: Attach the daemon binary to the same draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp target/release/traciumd traciumd-linux-x86_64
+          gh release upload "${{ github.ref_name }}" traciumd-linux-x86_64 --clobber

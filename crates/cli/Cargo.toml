@@ -1,0 +1,22 @@
+[package]
+name = "tracium-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tracium headless daemon + CLI — background monitoring with no GUI."
+
+[[bin]]
+name = "traciumd"
+path = "src/main.rs"
+
+[dependencies]
+tracium-store = { path = "../store", version = "0.1.0" }
+tracium-monitor = { path = "../monitor", version = "0.1.0" }
+tracium-probe = { path = "../probe", version = "0.1.0" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+printpdf = "0.7"
+dirs = "5"

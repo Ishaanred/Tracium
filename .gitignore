@@ -1,0 +1,29 @@
+# Rust
+/target
+**/target
+/.build-tmp
+
+# Node
+node_modules
+dist
+.pnpm-store
+
+# Tauri generated
+src-tauri/gen
+
+# Bundled sidecar binaries (fetched via scripts/fetch-sidecars.sh, not committed)
+src-tauri/binaries/
+
+# Local db / env
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+
+# OS / editor
+.DS_Store
+*.log
+
+# Local git worktrees (superpowers:using-git-worktrees)
+.worktrees/

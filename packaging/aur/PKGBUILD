@@ -1,0 +1,40 @@
+# Maintainer: Ishaanred <ishaan@ailacds.com>
+pkgname=tracium
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Cross-platform desktop network health monitor: connectivity, Wi-Fi, DNS, bufferbloat, and QoE, with a headless traciumd daemon"
+arch=('x86_64')
+url="https://github.com/Ishaanred/Tracium"
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3' 'traceroute' 'iw' 'iputils')
+makedepends=('rust' 'cargo' 'nodejs' 'pnpm' 'git')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/Ishaanred/Tracium/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "Tracium-$pkgver"
+  pnpm install --frozen-lockfile
+  pnpm tauri build --bundles deb
+  cargo build --release -p tracium-cli
+}
+
+package() {
+  cd "Tracium-$pkgver"
+
+  # Unpack the .deb produced by `tauri build` — it already contains the
+  # correctly laid-out binary, .desktop entry, and icons.
+  local debfile datatar
+  debfile=$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' | head -n1)
+  bsdtar -xf "$debfile" -C "$srcdir"
+  datatar=$(find "$srcdir" -maxdepth 1 -name 'data.tar.*' | head -n1)
+  bsdtar -xf "$datatar" -C "$pkgdir"
+
+  # Headless daemon
+  install -Dm755 target/release/traciumd "$pkgdir/usr/bin/traciumd"
+
+  # systemd user unit
+  install -Dm644 packaging/systemd/tracium.service \
+    "$pkgdir/usr/lib/systemd/user/tracium.service"
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

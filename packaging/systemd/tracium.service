@@ -1,0 +1,25 @@
+# Tracium headless monitor — systemd *user* service (no root needed).
+#
+# Install:
+#   cargo build --release -p tracium-cli
+#   install -Dm755 target/release/traciumd ~/.local/bin/traciumd
+#   install -Dm644 packaging/systemd/tracium.service ~/.config/systemd/user/tracium.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now tracium.service
+#   # (optional) survive logout:  loginctl enable-linger "$USER"
+#
+# Check:   systemctl --user status tracium
+#          traciumd status ; traciumd report
+[Unit]
+Description=Tracium network monitor (headless)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/traciumd run
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
