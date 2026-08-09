@@ -342,6 +342,22 @@ fn print_banner(db: &std::path::Path, interval: f64, sections: &std::collections
     println!("  sections: {}\n", names.join(", "));
 }
 
+/// Derive the target label/host, devices IP, and DNS resolver-name column
+/// widths from the terminal's column count. Floors match the widths this
+/// dashboard used before this feature existed (14/24/16/12), so an 80-column
+/// terminal or a non-TTY (piped output, where `cols` is the 80-column
+/// fallback) renders identically to before. `cols` is clamped to 60..=200
+/// before the formula applies, so a degenerate reading can't produce
+/// degenerate output.
+fn column_widths(cols: usize) -> (usize, usize, usize, usize) {
+    let cols = cols.clamp(60, 200);
+    let label_w = (cols * 18 / 100).max(14);
+    let host_w = (cols * 30 / 100).max(24);
+    let ip_w = (cols * 20 / 100).max(16);
+    let resolver_w = (cols * 15 / 100).max(12);
+    (label_w, host_w, ip_w, resolver_w)
+}
+
 /// Live in-place dashboard. Read-only, so it runs happily alongside the daemon.
 async fn watch(
     store: &Store,
@@ -390,6 +406,8 @@ async fn watch(
             .as_ref()
             .map(|r| route_changed(&mut prev_route_hash, &r.route_hash))
             .unwrap_or(false);
+        let term_cols = terminal_size::terminal_size().map(|(w, _)| w.0 as usize).unwrap_or(80);
+        let (label_w, host_w, ip_w, resolver_w) = column_widths(term_cols);
 
         let mut buf = String::new();
         buf.push_str("\x1b[2J\x1b[H"); // clear screen + cursor home
@@ -408,7 +426,10 @@ async fn watch(
                     Some(false) => "down".to_string(),
                     None => "—".to_string(),
                 };
-                buf.push_str(&format!("    {:14} {:24} {}\n", t.label, t.host, state));
+                buf.push_str(&format!(
+                    "    {:label_w$} {:host_w$} {}\n",
+                    t.label, t.host, state,
+                ));
             }
             if let Some(g) = &gateway {
                 buf.push_str(&format!(
@@ -486,7 +507,7 @@ async fn watch(
             buf.push_str(&format!("  devices: {} online\n", active.len()));
             for d in active.iter().take(8) {
                 buf.push_str(&format!(
-                    "    {:16} {}\n",
+                    "    {:ip_w$} {}\n",
                     d.ip.as_deref().unwrap_or("?"),
                     d.hostname.as_deref().unwrap_or_else(|| d.mac.as_deref().unwrap_or("")),
                 ));
@@ -518,7 +539,7 @@ async fn watch(
             } else {
                 for s in &dns {
                     buf.push_str(&format!(
-                        "  dns: {:12} {:>8}  {} lookups, {} failures\n",
+                        "  dns: {:resolver_w$} {:>8}  {} lookups, {} failures\n",
                         s.resolver,
                         s.avg_ms.map(|v| format!("{v:.1}ms")).unwrap_or_else(|| "—".into()),
                         s.count,
@@ -810,6 +831,36 @@ fn human(secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn column_widths_floor_matches_todays_hardcoded_values_at_80_cols() {
+        assert_eq!(column_widths(80), (14, 24, 16, 12));
+    }
+
+    #[test]
+    fn column_widths_floor_holds_below_80_cols() {
+        // Below the floor, widths never shrink past today's hardcoded values.
+        assert_eq!(column_widths(60), (14, 24, 16, 12));
+    }
+
+    #[test]
+    fn column_widths_grow_on_a_wide_terminal() {
+        let (label_w, host_w, ip_w, resolver_w) = column_widths(160);
+        assert!(label_w > 14, "label_w should grow past the floor at 160 cols, got {label_w}");
+        assert!(host_w > 24, "host_w should grow past the floor at 160 cols, got {host_w}");
+        assert!(ip_w > 16, "ip_w should grow past the floor at 160 cols, got {ip_w}");
+        assert!(resolver_w > 12, "resolver_w should grow past the floor at 160 cols, got {resolver_w}");
+    }
+
+    #[test]
+    fn column_widths_clamps_extreme_input() {
+        // An absurdly narrow reading clamps up to 60 before the formula applies,
+        // so it matches the 60-cols case exactly.
+        assert_eq!(column_widths(10), column_widths(60));
+        // An absurdly wide reading clamps down to 200 before the formula applies,
+        // so it matches the 200-cols case exactly.
+        assert_eq!(column_widths(10_000), column_widths(200));
+    }
 
     #[test]
     fn resolve_sections_defaults_to_everything() {
