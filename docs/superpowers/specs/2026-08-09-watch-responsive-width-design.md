@@ -46,3 +46,56 @@ adds.
 
 - Unit test the width-derivation function (a pure `fn column_widths(cols: usize) -> (usize, usize, usize, usize)` or similar) at: the floor case (`cols` below or at 80, all four widths equal today's hardcoded values), a wide case (e.g. `cols = 160`, all four widths larger than the floor), and the clamp boundaries (`cols` far below 60 and far above 200 both clamp before the formula applies).
 - No integration/DB test needed — this only changes string formatting.
+
+## Revision (2026-08-10): percentage-of-terminal-width abandoned
+
+Manual testing on a real (wide) terminal showed the percentage-of-width
+formula above produces bad output: target labels, IPs, and DNS resolver
+names are short, bounded-length strings that don't need to grow just
+because the terminal is wide. At a clamped-max 200-column reading, `host_w`
+alone was 60 characters — stretching a 7-character IP address like
+`1.1.1.1` across a 60-column field produces large, ugly dead gaps between
+columns, which is worse than the original cramped-at-80-columns problem
+this work set out to fix.
+
+**Corrected approach:** column widths are now fit to the *content* actually
+being displayed each tick, not to terminal width at all:
+
+```
+column_width = clamp(longest_current_value + margin, floor, cap)
+```
+
+where `margin` is a small fixed gap (2 chars) and `floor`/`cap` bound the
+result per column (floor = today's original hardcoded widths, unchanged;
+cap = a generous but finite ceiling so one pathologically long value can't
+blow out the column). This self-adjusts to whatever data is actually on
+screen — short IPs stay tight, a long hostname or resolver name gets the
+room it needs — and is independent of terminal width entirely. The
+`terminal_size` dependency and the `cols` parameter are dropped; this
+function no longer needs to know the terminal's size.
+
+Revised columns and bounds:
+- target label: floor 14, cap 24
+- target host: floor 24, cap 45 (room for a full IPv6 address + margin)
+- devices IP: floor 16, cap 20
+- DNS resolver name: floor 12, cap 24
+
+## Revision (2026-08-10): alternate screen buffer
+
+Separately, manual testing surfaced a second, unrelated point of confusion:
+`watch`'s clear-screen-per-tick approach (`\x1b[2J\x1b[H`) does overwrite in
+place when watched live, but every tick still lands in the terminal's
+scrollback — so copy-pasting or scrolling up shows every past frame
+stacked, which reads as "it keeps printing new screens instead of
+updating." The fix is the standard terminal-dashboard idiom (used by
+`htop`, `less`, `vim`): switch into the **alternate screen buffer** for the
+duration of `watch`, and switch back on exit. This is a separate screen
+that scrollback never sees; exiting restores the original screen exactly
+as it was. No new dependency needed — this is two more ANSI escape
+sequences (`\x1b[?1049h` to enter, `\x1b[?1049l` to leave), following the
+same string-based approach `watch` already uses for `\x1b[2J\x1b[H`.
+Entering happens once, right after the startup banner (which stays on the
+normal screen, so it's still visible in scrollback afterward); leaving
+happens once, on both the normal Ctrl-C exit path and — via a cleanup guard
+— any early return, so a crash mid-loop can't strand the user's terminal
+in the alternate buffer.

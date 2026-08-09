@@ -203,3 +203,162 @@ git commit -m "cli: scale watch's column widths to terminal width"
 - **Spec coverage:** the spec's three scope items (dependency, `column_widths` derivation with floor/ceiling, wiring into `status`/`devices`/`dns`) are all in Step 1/4/6. The spec's explicit out-of-scope items (grid layout, resize special-casing, sparkline/banner changes) are untouched by this plan.
 - **Placeholder scan:** none — every step has runnable code.
 - **Type consistency:** `column_widths(cols: usize) -> (usize, usize, usize, usize)` is defined in Step 4 and consumed with the same tuple order in Step 6; the `label_w`/`host_w`/`ip_w`/`resolver_w` names are used consistently in both the destructuring and the format strings' named-argument syntax.
+
+---
+
+## Task 2 (revision): content-fit widths + alternate screen buffer
+
+Manual testing on a real terminal showed Task 1's percentage-of-width
+formula produces bad output on wide terminals (see the design spec's
+2026-08-10 revision notes for the full rationale). This task replaces
+Task 1's terminal-width-driven `column_widths` with a content-fit version,
+and separately adds the alternate-screen-buffer fix for scrollback
+pollution. Both are small enough to land as one task.
+
+**Files:**
+- Modify: `crates/cli/Cargo.toml` (remove `terminal_size` — no longer needed)
+- Modify: `crates/cli/src/main.rs`
+
+**Interfaces:**
+- Replaces: `fn column_widths(cols: usize) -> (usize, usize, usize, usize)` with `fn fit_width(values: impl Iterator<Item = usize>, floor: usize, margin: usize, cap: usize) -> usize`.
+- Produces (new): alternate-screen enter/exit calls around `watch()`'s loop.
+
+- [ ] **Step 1: Remove the now-unneeded dependency**
+
+In `crates/cli/Cargo.toml`, delete the `terminal_size = "0.4"` line added by Task 1.
+
+- [ ] **Step 2: Replace `column_widths`'s tests with `fit_width` tests**
+
+Replace the four `column_widths_*` tests in `#[cfg(test)] mod tests` with:
+
+```rust
+    #[test]
+    fn fit_width_uses_floor_when_content_is_short() {
+        let values = ["1.1.1.1".len(), "8.8.8.8".len()].into_iter();
+        assert_eq!(fit_width(values, 16, 2, 20), 16);
+    }
+
+    #[test]
+    fn fit_width_grows_to_fit_a_long_value_plus_margin() {
+        // "2606:4700:4700::1111" is 21 chars; +2 margin = 23, within the cap.
+        let values = ["1.1.1.1".len(), "2606:4700:4700::1111".len()].into_iter();
+        assert_eq!(fit_width(values, 24, 2, 45), 23_usize.max(24));
+    }
+
+    #[test]
+    fn fit_width_caps_a_pathologically_long_value() {
+        let values = [100usize].into_iter();
+        assert_eq!(fit_width(values, 12, 2, 24), 24);
+    }
+
+    #[test]
+    fn fit_width_falls_back_to_floor_on_empty_input() {
+        let values: std::iter::Empty<usize> = std::iter::empty();
+        assert_eq!(fit_width(values, 14, 2, 24), 14);
+    }
+```
+
+- [ ] **Step 3: Run tests to verify they fail**
+
+Run: `cargo test -p tracium-cli fit_width`
+Expected: FAIL to compile — `fit_width` not defined (and the old `column_widths` tests you replaced are gone, so no conflict).
+
+- [ ] **Step 4: Replace `column_widths` with `fit_width`**
+
+Replace the entire `column_widths` function with:
+
+```rust
+/// Fit a column's width to the longest value currently being displayed in
+/// it, not to terminal width — target labels, IPs, and resolver names are
+/// short, bounded-length strings that don't need to grow just because the
+/// terminal is wide. `margin` is a small fixed gap added after the longest
+/// value; the result is clamped to `[floor, cap]` so short content doesn't
+/// shrink below today's original widths and one pathologically long value
+/// can't blow out the column.
+fn fit_width(values: impl Iterator<Item = usize>, floor: usize, margin: usize, cap: usize) -> usize {
+    let longest = values.max().unwrap_or(0);
+    (longest + margin).clamp(floor, cap)
+}
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `cargo test -p tracium-cli fit_width`
+Expected: PASS (4 tests)
+
+- [ ] **Step 6: Rewire `watch()` to call `fit_width` per column, using this tick's actual data**
+
+Replace:
+```rust
+        let term_cols = terminal_size::terminal_size().map(|(w, _)| w.0 as usize).unwrap_or(80);
+        let (label_w, host_w, ip_w, resolver_w) = column_widths(term_cols);
+```
+with:
+```rust
+        let label_w = fit_width(targets.iter().map(|t| t.label.chars().count()), 14, 2, 24);
+        let host_w = fit_width(targets.iter().map(|t| t.host.chars().count()), 24, 2, 45);
+        let active_devices: Vec<_> = devices.iter().filter(|d| d.is_active).collect();
+        let ip_w = fit_width(active_devices.iter().map(|d| d.ip.as_deref().unwrap_or("?").chars().count()), 16, 2, 20);
+        let resolver_w = fit_width(dns.iter().map(|s| s.resolver.chars().count()), 12, 2, 24);
+```
+
+Then, in the `devices` render block, since `active_devices` is now computed above (outside the block), replace the block's own `let active: Vec<_> = devices.iter().filter(|d| d.is_active).collect();` line with nothing (delete it) and use the outer `active_devices` binding in its place for the rest of that block (`active_devices.len()`, `active_devices.iter().take(8)`, `active_devices.len() > 8`).
+
+- [ ] **Step 7: Add the alternate-screen buffer**
+
+Right after the existing `print_banner(db, interval, &sections);` call and its `tokio::time::sleep(Duration::from_millis(700)).await;` line (both stay on the normal screen, so the banner remains visible in scrollback), add:
+
+```rust
+    print!("\x1b[?1049h"); // enter alternate screen — scrollback never sees the live loop
+    std::io::stdout().flush().ok();
+```
+
+Immediately before both `break` points that end the loop — the `tokio::signal::ctrl_c()` arm's `{ println!(); break; }` — replace it with:
+
+```rust
+            _ = tokio::signal::ctrl_c() => {
+                print!("\x1b[?1049l"); // leave alternate screen, restore the user's terminal
+                std::io::stdout().flush().ok();
+                break;
+            }
+```
+
+Also wrap the function's `?`-propagating store calls so an early error return still restores the screen: this loop's `?` on `store.latest_per_target().await?` etc. would otherwise strand the terminal in the alternate buffer if a query fails after the buffer is entered. Add a small guard immediately after the `print!("\x1b[?1049h")` line:
+
+```rust
+    struct RestoreScreen;
+    impl Drop for RestoreScreen {
+        fn drop(&mut self) {
+            print!("\x1b[?1049l");
+            std::io::stdout().flush().ok();
+        }
+    }
+    let _restore_screen = RestoreScreen;
+```
+
+Then remove the manual `print!("\x1b[?1049l")` from the Ctrl-C arm added above (the `Drop` guard now handles all exit paths — Ctrl-C, an early `?` return, or a panic — uniformly), leaving that arm as just:
+
+```rust
+            _ = tokio::signal::ctrl_c() => { println!(); break; }
+```
+
+(`println!()` still runs before the guard drops at function end, so the cursor lands on a fresh line on the normal screen after the alternate buffer closes.)
+
+- [ ] **Step 8: Build and run the full test suite**
+
+Run: `cargo build -p tracium-cli`
+Expected: builds cleanly, no warnings (confirm `terminal_size` no longer appears in `cargo tree -p tracium-cli` output).
+
+Run: `cargo test -p tracium-cli`
+Expected: PASS — 17 tests total (13 from the original expansion + 4 new `fit_width` tests; the 4 old `column_widths` tests were replaced, not added to, so the count doesn't grow further).
+
+- [ ] **Step 9: Manually verify**
+
+Run `cargo run -p tracium-cli --bin traciumd -- watch --interval 1` in a real (wide) terminal, Ctrl-C after a few ticks, and confirm: (a) columns stay tight around actual IP/label lengths instead of stretching across the terminal; (b) the screen updates in place with no scrollback growth — scroll up after Ctrl-C and the alternate-screen content should be gone, with only the startup banner and your shell prompt visible; (c) the terminal is left in a normal, usable state after Ctrl-C (cursor visible, prompt behaves normally).
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add crates/cli/Cargo.toml crates/cli/src/main.rs Cargo.lock
+git commit -m "cli: fit watch's columns to content and use the alternate screen buffer"
+```
