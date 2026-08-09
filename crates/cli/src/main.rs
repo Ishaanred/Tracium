@@ -342,20 +342,16 @@ fn print_banner(db: &std::path::Path, interval: f64, sections: &std::collections
     println!("  sections: {}\n", names.join(", "));
 }
 
-/// Derive the target label/host, devices IP, and DNS resolver-name column
-/// widths from the terminal's column count. Floors match the widths this
-/// dashboard used before this feature existed (14/24/16/12), so an 80-column
-/// terminal or a non-TTY (piped output, where `cols` is the 80-column
-/// fallback) renders identically to before. `cols` is clamped to 60..=200
-/// before the formula applies, so a degenerate reading can't produce
-/// degenerate output.
-fn column_widths(cols: usize) -> (usize, usize, usize, usize) {
-    let cols = cols.clamp(60, 200);
-    let label_w = (cols * 18 / 100).max(14);
-    let host_w = (cols * 30 / 100).max(24);
-    let ip_w = (cols * 20 / 100).max(16);
-    let resolver_w = (cols * 15 / 100).max(12);
-    (label_w, host_w, ip_w, resolver_w)
+/// Fit a column's width to the longest value currently being displayed in
+/// it, not to terminal width — target labels, IPs, and resolver names are
+/// short, bounded-length strings that don't need to grow just because the
+/// terminal is wide. `margin` is a small fixed gap added after the longest
+/// value; the result is clamped to `[floor, cap]` so short content doesn't
+/// shrink below today's original widths and one pathologically long value
+/// can't blow out the column.
+fn fit_width(values: impl Iterator<Item = usize>, floor: usize, margin: usize, cap: usize) -> usize {
+    let longest = values.max().unwrap_or(0);
+    (longest + margin).clamp(floor, cap)
 }
 
 /// Live in-place dashboard. Read-only, so it runs happily alongside the daemon.
@@ -373,6 +369,20 @@ async fn watch(
     let interval = interval.max(0.5);
     print_banner(db, interval, &sections);
     tokio::time::sleep(Duration::from_millis(700)).await;
+
+    print!("\x1b[?1049h"); // enter alternate screen — scrollback never sees the live loop
+    std::io::stdout().flush().ok();
+    // Restores the normal screen on every exit path (Ctrl-C, an early `?`
+    // return, or a panic) uniformly, so a crash mid-loop can't strand the
+    // user's terminal in the alternate buffer.
+    struct RestoreScreen;
+    impl Drop for RestoreScreen {
+        fn drop(&mut self) {
+            print!("\x1b[?1049l");
+            std::io::stdout().flush().ok();
+        }
+    }
+    let _restore_screen = RestoreScreen;
 
     let dur = Duration::from_secs_f64(interval);
     let f = |v: Option<f64>, u: &str| v.map(|x| format!("{x:.1}{u}")).unwrap_or_else(|| "—".into());
@@ -406,8 +416,11 @@ async fn watch(
             .as_ref()
             .map(|r| route_changed(&mut prev_route_hash, &r.route_hash))
             .unwrap_or(false);
-        let term_cols = terminal_size::terminal_size().map(|(w, _)| w.0 as usize).unwrap_or(80);
-        let (label_w, host_w, ip_w, resolver_w) = column_widths(term_cols);
+        let label_w = fit_width(targets.iter().map(|t| t.label.chars().count()), 14, 2, 24);
+        let host_w = fit_width(targets.iter().map(|t| t.host.chars().count()), 24, 2, 45);
+        let active_devices: Vec<_> = devices.iter().filter(|d| d.is_active).collect();
+        let ip_w = fit_width(active_devices.iter().map(|d| d.ip.as_deref().unwrap_or("?").chars().count()), 16, 2, 20);
+        let resolver_w = fit_width(dns.iter().map(|s| s.resolver.chars().count()), 12, 2, 24);
 
         let mut buf = String::new();
         buf.push_str("\x1b[2J\x1b[H"); // clear screen + cursor home
@@ -503,17 +516,16 @@ async fn watch(
         }
 
         if sections.contains("devices") {
-            let active: Vec<_> = devices.iter().filter(|d| d.is_active).collect();
-            buf.push_str(&format!("  devices: {} online\n", active.len()));
-            for d in active.iter().take(8) {
+            buf.push_str(&format!("  devices: {} online\n", active_devices.len()));
+            for d in active_devices.iter().take(8) {
                 buf.push_str(&format!(
                     "    {:ip_w$} {}\n",
                     d.ip.as_deref().unwrap_or("?"),
                     d.hostname.as_deref().unwrap_or_else(|| d.mac.as_deref().unwrap_or("")),
                 ));
             }
-            if active.len() > 8 {
-                buf.push_str(&format!("    +{} more\n", active.len() - 8));
+            if active_devices.len() > 8 {
+                buf.push_str(&format!("    +{} more\n", active_devices.len() - 8));
             }
         }
 
@@ -833,33 +845,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn column_widths_floor_matches_todays_hardcoded_values_at_80_cols() {
-        assert_eq!(column_widths(80), (14, 24, 16, 12));
+    fn fit_width_uses_floor_when_content_is_short() {
+        let values = ["1.1.1.1".len(), "8.8.8.8".len()].into_iter();
+        assert_eq!(fit_width(values, 16, 2, 20), 16);
     }
 
     #[test]
-    fn column_widths_floor_holds_below_80_cols() {
-        // Below the floor, widths never shrink past today's hardcoded values.
-        assert_eq!(column_widths(60), (14, 24, 16, 12));
+    fn fit_width_grows_to_fit_a_long_value_plus_margin() {
+        // "2606:4700:4700::1111" is 21 chars; +2 margin = 23, within the cap.
+        let values = ["1.1.1.1".len(), "2606:4700:4700::1111".len()].into_iter();
+        assert_eq!(fit_width(values, 24, 2, 45), 23_usize.max(24));
     }
 
     #[test]
-    fn column_widths_grow_on_a_wide_terminal() {
-        let (label_w, host_w, ip_w, resolver_w) = column_widths(160);
-        assert!(label_w > 14, "label_w should grow past the floor at 160 cols, got {label_w}");
-        assert!(host_w > 24, "host_w should grow past the floor at 160 cols, got {host_w}");
-        assert!(ip_w > 16, "ip_w should grow past the floor at 160 cols, got {ip_w}");
-        assert!(resolver_w > 12, "resolver_w should grow past the floor at 160 cols, got {resolver_w}");
+    fn fit_width_caps_a_pathologically_long_value() {
+        let values = [100usize].into_iter();
+        assert_eq!(fit_width(values, 12, 2, 24), 24);
     }
 
     #[test]
-    fn column_widths_clamps_extreme_input() {
-        // An absurdly narrow reading clamps up to 60 before the formula applies,
-        // so it matches the 60-cols case exactly.
-        assert_eq!(column_widths(10), column_widths(60));
-        // An absurdly wide reading clamps down to 200 before the formula applies,
-        // so it matches the 200-cols case exactly.
-        assert_eq!(column_widths(10_000), column_widths(200));
+    fn fit_width_falls_back_to_floor_on_empty_input() {
+        let values: std::iter::Empty<usize> = std::iter::empty();
+        assert_eq!(fit_width(values, 14, 2, 24), 14);
     }
 
     #[test]
