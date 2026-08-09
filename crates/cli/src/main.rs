@@ -342,6 +342,18 @@ fn print_banner(db: &std::path::Path, interval: f64, sections: &std::collections
     println!("  sections: {}\n", names.join(", "));
 }
 
+/// Fit a column's width to the longest value currently being displayed in
+/// it, not to terminal width — target labels, IPs, and resolver names are
+/// short, bounded-length strings that don't need to grow just because the
+/// terminal is wide. `margin` is a small fixed gap added after the longest
+/// value; the result is clamped to `[floor, cap]` so short content doesn't
+/// shrink below today's original widths and one pathologically long value
+/// can't blow out the column.
+fn fit_width(values: impl Iterator<Item = usize>, floor: usize, margin: usize, cap: usize) -> usize {
+    let longest = values.max().unwrap_or(0);
+    (longest + margin).clamp(floor, cap)
+}
+
 /// Live in-place dashboard. Read-only, so it runs happily alongside the daemon.
 async fn watch(
     store: &Store,
@@ -357,6 +369,20 @@ async fn watch(
     let interval = interval.max(0.5);
     print_banner(db, interval, &sections);
     tokio::time::sleep(Duration::from_millis(700)).await;
+
+    print!("\x1b[?1049h"); // enter alternate screen — scrollback never sees the live loop
+    std::io::stdout().flush().ok();
+    // Restores the normal screen on every exit path (Ctrl-C, an early `?`
+    // return, or a panic) uniformly, so a crash mid-loop can't strand the
+    // user's terminal in the alternate buffer.
+    struct RestoreScreen;
+    impl Drop for RestoreScreen {
+        fn drop(&mut self) {
+            print!("\x1b[?1049l");
+            std::io::stdout().flush().ok();
+        }
+    }
+    let _restore_screen = RestoreScreen;
 
     let dur = Duration::from_secs_f64(interval);
     let f = |v: Option<f64>, u: &str| v.map(|x| format!("{x:.1}{u}")).unwrap_or_else(|| "—".into());
@@ -390,6 +416,11 @@ async fn watch(
             .as_ref()
             .map(|r| route_changed(&mut prev_route_hash, &r.route_hash))
             .unwrap_or(false);
+        let label_w = fit_width(targets.iter().map(|t| t.label.chars().count()), 14, 2, 24);
+        let host_w = fit_width(targets.iter().map(|t| t.host.chars().count()), 24, 2, 45);
+        let active_devices: Vec<_> = devices.iter().filter(|d| d.is_active).collect();
+        let ip_w = fit_width(active_devices.iter().map(|d| d.ip.as_deref().unwrap_or("?").chars().count()), 16, 2, 20);
+        let resolver_w = fit_width(dns.iter().map(|s| s.resolver.chars().count()), 12, 2, 24);
 
         let mut buf = String::new();
         buf.push_str("\x1b[2J\x1b[H"); // clear screen + cursor home
@@ -408,7 +439,10 @@ async fn watch(
                     Some(false) => "down".to_string(),
                     None => "—".to_string(),
                 };
-                buf.push_str(&format!("    {:14} {:24} {}\n", t.label, t.host, state));
+                buf.push_str(&format!(
+                    "    {:label_w$} {:host_w$} {}\n",
+                    t.label, t.host, state,
+                ));
             }
             if let Some(g) = &gateway {
                 buf.push_str(&format!(
@@ -482,17 +516,16 @@ async fn watch(
         }
 
         if sections.contains("devices") {
-            let active: Vec<_> = devices.iter().filter(|d| d.is_active).collect();
-            buf.push_str(&format!("  devices: {} online\n", active.len()));
-            for d in active.iter().take(8) {
+            buf.push_str(&format!("  devices: {} online\n", active_devices.len()));
+            for d in active_devices.iter().take(8) {
                 buf.push_str(&format!(
-                    "    {:16} {}\n",
+                    "    {:ip_w$} {}\n",
                     d.ip.as_deref().unwrap_or("?"),
                     d.hostname.as_deref().unwrap_or_else(|| d.mac.as_deref().unwrap_or("")),
                 ));
             }
-            if active.len() > 8 {
-                buf.push_str(&format!("    +{} more\n", active.len() - 8));
+            if active_devices.len() > 8 {
+                buf.push_str(&format!("    +{} more\n", active_devices.len() - 8));
             }
         }
 
@@ -518,7 +551,7 @@ async fn watch(
             } else {
                 for s in &dns {
                     buf.push_str(&format!(
-                        "  dns: {:12} {:>8}  {} lookups, {} failures\n",
+                        "  dns: {:resolver_w$} {:>8}  {} lookups, {} failures\n",
                         s.resolver,
                         s.avg_ms.map(|v| format!("{v:.1}ms")).unwrap_or_else(|| "—".into()),
                         s.count,
@@ -810,6 +843,31 @@ fn human(secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fit_width_uses_floor_when_content_is_short() {
+        let values = ["1.1.1.1".len(), "8.8.8.8".len()].into_iter();
+        assert_eq!(fit_width(values, 16, 2, 20), 16);
+    }
+
+    #[test]
+    fn fit_width_grows_to_fit_a_long_value_plus_margin() {
+        // "2606:4700:4700::1111" is 21 chars; +2 margin = 23, within the cap.
+        let values = ["1.1.1.1".len(), "2606:4700:4700::1111".len()].into_iter();
+        assert_eq!(fit_width(values, 24, 2, 45), 23_usize.max(24));
+    }
+
+    #[test]
+    fn fit_width_caps_a_pathologically_long_value() {
+        let values = [100usize].into_iter();
+        assert_eq!(fit_width(values, 12, 2, 24), 24);
+    }
+
+    #[test]
+    fn fit_width_falls_back_to_floor_on_empty_input() {
+        let values: std::iter::Empty<usize> = std::iter::empty();
+        assert_eq!(fit_width(values, 14, 2, 24), 14);
+    }
 
     #[test]
     fn resolve_sections_defaults_to_everything() {
