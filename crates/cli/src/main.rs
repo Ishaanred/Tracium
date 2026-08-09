@@ -182,6 +182,46 @@ const SECTION_KEYS: [&str; 11] = [
     "security", "devices", "route", "dns", "events",
 ];
 
+const SPARK_LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+const SPARK_CAPACITY: usize = 60;
+
+/// Push a sample into a fixed-capacity ring buffer, evicting the oldest
+/// entry once past `SPARK_CAPACITY`. Used for the session-local latency and
+/// bandwidth history — never persisted, dies with the process.
+fn push_sample(buf: &mut std::collections::VecDeque<Option<f64>>, value: Option<f64>) {
+    buf.push_back(value);
+    if buf.len() > SPARK_CAPACITY {
+        buf.pop_front();
+    }
+}
+
+/// Render a ring buffer as a min-max-normalized unicode block sparkline.
+/// `None` entries (a tick where the metric was unavailable) render as `·`
+/// so the horizontal axis stays aligned with elapsed ticks.
+fn sparkline(values: &std::collections::VecDeque<Option<f64>>) -> String {
+    if values.is_empty() {
+        return String::new();
+    }
+    let present: Vec<f64> = values.iter().filter_map(|v| *v).collect();
+    if present.is_empty() {
+        // All values are None, render as dots
+        return values.iter().map(|_| '·').collect();
+    }
+    let min = present.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max = present.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let span = if (max - min).abs() < f64::EPSILON { 1.0 } else { max - min };
+    values
+        .iter()
+        .map(|v| match v {
+            Some(x) => {
+                let idx = (((x - min) / span) * (SPARK_LEVELS.len() - 1) as f64).round() as usize;
+                SPARK_LEVELS[idx.min(SPARK_LEVELS.len() - 1)]
+            }
+            None => '·',
+        })
+        .collect()
+}
+
 /// Resolve `--hide`/`--only` into the set of enabled section keys. Unknown
 /// keys are warned about on stderr and ignored rather than failing — a typo
 /// shouldn't kill a live dashboard. Clap's `conflicts_with` already
@@ -622,5 +662,53 @@ mod tests {
     fn resolve_sections_only_with_unknown_key_yields_empty_for_that_key() {
         let set = resolve_sections(None, Some("bogus"));
         assert!(set.is_empty());
+    }
+
+    #[test]
+    fn sparkline_empty_buffer_is_empty_string() {
+        let buf = std::collections::VecDeque::new();
+        assert_eq!(sparkline(&buf), "");
+    }
+
+    #[test]
+    fn sparkline_all_none_renders_dots() {
+        let mut buf = std::collections::VecDeque::new();
+        push_sample(&mut buf, None);
+        push_sample(&mut buf, None);
+        assert_eq!(sparkline(&buf), "··");
+    }
+
+    #[test]
+    fn sparkline_flat_line_uses_lowest_level_uniformly() {
+        let mut buf = std::collections::VecDeque::new();
+        push_sample(&mut buf, Some(10.0));
+        push_sample(&mut buf, Some(10.0));
+        push_sample(&mut buf, Some(10.0));
+        let s = sparkline(&buf);
+        let chars: Vec<char> = s.chars().collect();
+        assert_eq!(chars.len(), 3);
+        assert!(chars.windows(2).all(|w| w[0] == w[1]), "flat input should render a flat sparkline");
+    }
+
+    #[test]
+    fn sparkline_increasing_values_increase_level() {
+        let mut buf = std::collections::VecDeque::new();
+        push_sample(&mut buf, Some(0.0));
+        push_sample(&mut buf, Some(50.0));
+        push_sample(&mut buf, Some(100.0));
+        let chars: Vec<char> = sparkline(&buf).chars().collect();
+        assert_eq!(chars[0], SPARK_LEVELS[0]);
+        assert_eq!(chars[2], SPARK_LEVELS[SPARK_LEVELS.len() - 1]);
+    }
+
+    #[test]
+    fn push_sample_caps_at_capacity() {
+        let mut buf = std::collections::VecDeque::new();
+        for i in 0..(SPARK_CAPACITY + 10) {
+            push_sample(&mut buf, Some(i as f64));
+        }
+        assert_eq!(buf.len(), SPARK_CAPACITY);
+        // oldest entries should have been evicted, so the front is not 0.0
+        assert_eq!(buf.front().copied().flatten(), Some(10.0));
     }
 }
