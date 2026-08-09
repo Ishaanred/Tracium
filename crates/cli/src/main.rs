@@ -176,6 +176,40 @@ fn window_secs(s: &str) -> i64 {
     s.parse::<i64>().unwrap_or(86400)
 }
 
+/// All section keys `watch` understands, in render order.
+const SECTION_KEYS: [&str; 11] = [
+    "status", "reliability", "qoe", "sparkline", "wifi", "bandwidth",
+    "security", "devices", "route", "dns", "events",
+];
+
+/// Resolve `--hide`/`--only` into the set of enabled section keys. Unknown
+/// keys are warned about on stderr and ignored rather than failing — a typo
+/// shouldn't kill a live dashboard. Clap's `conflicts_with` already
+/// guarantees `hide` and `only` are never both `Some`.
+fn resolve_sections(hide: Option<&str>, only: Option<&str>) -> std::collections::HashSet<&'static str> {
+    let known = |raw: &str| SECTION_KEYS.iter().find(|k| **k == raw).copied();
+    if let Some(only) = only {
+        let mut set = std::collections::HashSet::new();
+        for raw in only.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            match known(raw) {
+                Some(k) => { set.insert(k); }
+                None => eprintln!("unknown watch section '{raw}', ignoring"),
+            }
+        }
+        return set;
+    }
+    let mut set: std::collections::HashSet<&'static str> = SECTION_KEYS.iter().copied().collect();
+    if let Some(hide) = hide {
+        for raw in hide.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            match known(raw) {
+                Some(k) => { set.remove(k); }
+                None => eprintln!("unknown watch section '{raw}', ignoring"),
+            }
+        }
+    }
+    set
+}
+
 fn print_json<T: serde::Serialize>(v: &T) {
     println!("{}", serde_json::to_string_pretty(v).unwrap_or_else(|_| "null".into()));
 }
@@ -543,5 +577,50 @@ fn human(secs: i64) -> String {
         format!("{}h", secs / 3600)
     } else {
         format!("{secs}s")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_sections_defaults_to_everything() {
+        let set = resolve_sections(None, None);
+        assert_eq!(set.len(), SECTION_KEYS.len());
+        for k in SECTION_KEYS {
+            assert!(set.contains(k), "expected {k} to be enabled by default");
+        }
+    }
+
+    #[test]
+    fn resolve_sections_hide_removes_listed_keys() {
+        let set = resolve_sections(Some("wifi,devices"), None);
+        assert!(!set.contains("wifi"));
+        assert!(!set.contains("devices"));
+        assert!(set.contains("status"));
+        assert_eq!(set.len(), SECTION_KEYS.len() - 2);
+    }
+
+    #[test]
+    fn resolve_sections_only_restricts_to_listed_keys() {
+        let set = resolve_sections(None, Some("status, reliability"));
+        assert_eq!(set.len(), 2);
+        assert!(set.contains("status"));
+        assert!(set.contains("reliability"));
+        assert!(!set.contains("qoe"));
+    }
+
+    #[test]
+    fn resolve_sections_unknown_key_is_ignored_not_fatal() {
+        let set = resolve_sections(Some("bogus"), None);
+        // everything except the (nonexistent) "bogus" key stays enabled
+        assert_eq!(set.len(), SECTION_KEYS.len());
+    }
+
+    #[test]
+    fn resolve_sections_only_with_unknown_key_yields_empty_for_that_key() {
+        let set = resolve_sections(None, Some("bogus"));
+        assert!(set.is_empty());
     }
 }
