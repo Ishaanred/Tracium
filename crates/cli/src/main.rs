@@ -308,6 +308,16 @@ async fn status(store: &Store, json: bool) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Compare this tick's traceroute hash to the previous tick's, updating
+/// `prev_hash` in place. Returns `false` on the very first call (nothing to
+/// compare against yet) — this is session-local only, it does not touch
+/// the `events` table or duplicate the monitor's own route-change detection.
+fn route_changed(prev_hash: &mut Option<String>, current_hash: &str) -> bool {
+    let changed = prev_hash.as_deref().is_some_and(|p| p != current_hash);
+    *prev_hash = Some(current_hash.to_string());
+    changed
+}
+
 /// Live in-place dashboard. Read-only, so it runs happily alongside the daemon.
 async fn watch(store: &Store, interval: f64) -> Result<(), Box<dyn Error>> {
     use std::io::Write;
@@ -710,5 +720,25 @@ mod tests {
         assert_eq!(buf.len(), SPARK_CAPACITY);
         // oldest entries should have been evicted, so the front is not 0.0
         assert_eq!(buf.front().copied().flatten(), Some(10.0));
+    }
+
+    #[test]
+    fn route_changed_first_call_is_never_flagged() {
+        let mut prev = None;
+        assert!(!route_changed(&mut prev, "hash-a"));
+        assert_eq!(prev.as_deref(), Some("hash-a"));
+    }
+
+    #[test]
+    fn route_changed_same_hash_is_not_flagged() {
+        let mut prev = Some("hash-a".to_string());
+        assert!(!route_changed(&mut prev, "hash-a"));
+    }
+
+    #[test]
+    fn route_changed_different_hash_is_flagged() {
+        let mut prev = Some("hash-a".to_string());
+        assert!(route_changed(&mut prev, "hash-b"));
+        assert_eq!(prev.as_deref(), Some("hash-b"));
     }
 }
