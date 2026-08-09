@@ -206,9 +206,6 @@ fn push_sample(buf: &mut std::collections::VecDeque<Option<f64>>, value: Option<
 /// `None` entries (a tick where the metric was unavailable) render as `·`
 /// so the horizontal axis stays aligned with elapsed ticks.
 fn sparkline(values: &std::collections::VecDeque<Option<f64>>) -> String {
-    if values.is_empty() {
-        return String::new();
-    }
     let present: Vec<f64> = values.iter().filter_map(|v| *v).collect();
     if present.is_empty() {
         // All values are None, render as dots
@@ -338,8 +335,7 @@ fn print_banner(db: &std::path::Path, interval: f64, sections: &std::collections
     |_|  |_|  \_\/_/    \_\_____|_____|\____/|_|  |_|
 "#
     );
-    let mut names: Vec<&str> = SECTION_KEYS.iter().copied().filter(|k| sections.contains(k)).collect();
-    names.sort();
+    let names: Vec<&str> = SECTION_KEYS.iter().copied().filter(|k| sections.contains(k)).collect();
     println!("  traciumd {} — live watch", env!("CARGO_PKG_VERSION"));
     println!("  db:       {}", db.display());
     println!("  refresh:  {interval:.1}s");
@@ -358,10 +354,11 @@ async fn watch(
     use std::io::Write;
 
     let sections = resolve_sections(hide.as_deref(), only.as_deref());
+    let interval = interval.max(0.5);
     print_banner(db, interval, &sections);
     tokio::time::sleep(Duration::from_millis(700)).await;
 
-    let dur = Duration::from_secs_f64(interval.max(0.5));
+    let dur = Duration::from_secs_f64(interval);
     let f = |v: Option<f64>, u: &str| v.map(|x| format!("{x:.1}{u}")).unwrap_or_else(|| "—".into());
     let mut lat_hist: VecDeque<Option<f64>> = VecDeque::with_capacity(SPARK_CAPACITY);
     let mut bw_hist: VecDeque<Option<f64>> = VecDeque::with_capacity(SPARK_CAPACITY);
@@ -440,6 +437,8 @@ async fn watch(
                     "  QoE(30m): gaming {} · voip {} · video {} · streaming {} · web {}\n",
                     g(q.gaming), g(q.voip), g(q.video_call), g(q.streaming), g(q.web),
                 ));
+            } else {
+                buf.push_str("  QoE(30m): no scores yet\n");
             }
         }
 
@@ -911,6 +910,7 @@ mod tests {
     fn route_changed_same_hash_is_not_flagged() {
         let mut prev = Some("hash-a".to_string());
         assert!(!route_changed(&mut prev, "hash-a"));
+        assert_eq!(prev.as_deref(), Some("hash-a"));
     }
 
     #[test]
