@@ -37,6 +37,13 @@ enum Cmd {
     Watch {
         #[arg(long, default_value_t = 2.0)]
         interval: f64,
+        /// Comma-separated section keys to hide: status,reliability,qoe,
+        /// sparkline,wifi,bandwidth,security,devices,route,dns,events.
+        #[arg(long, conflicts_with = "only")]
+        hide: Option<String>,
+        /// Comma-separated section keys to show exclusively (same keys as --hide).
+        #[arg(long)]
+        only: Option<String>,
     },
     /// Reliability + QoE over a window (e.g. 24h, 7d, 30d).
     Report {
@@ -102,7 +109,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Monitor::new(store, MonitorConfig::default()).run(None).await;
         }
         Cmd::Status => status(&store, j).await?,
-        Cmd::Watch { interval } => watch(&store, interval).await?,
+        Cmd::Watch { interval, hide, only } => watch(&store, &db, interval, hide, only).await?,
         Cmd::Report { window, pdf } => report(&store, window_secs(&window), j, pdf).await?,
         Cmd::Dns { window } => dns(&store, window_secs(&window), j).await?,
         Cmd::Wifi => opt(j, &store.latest_wifi().await?, "not connected to Wi-Fi"),
@@ -340,18 +347,52 @@ fn print_banner(db: &std::path::Path, interval: f64, sections: &std::collections
 }
 
 /// Live in-place dashboard. Read-only, so it runs happily alongside the daemon.
-async fn watch(store: &Store, interval: f64) -> Result<(), Box<dyn Error>> {
+async fn watch(
+    store: &Store,
+    db: &std::path::Path,
+    interval: f64,
+    hide: Option<String>,
+    only: Option<String>,
+) -> Result<(), Box<dyn Error>> {
+    use std::collections::VecDeque;
     use std::io::Write;
+
+    let sections = resolve_sections(hide.as_deref(), only.as_deref());
+    print_banner(db, interval, &sections);
+    tokio::time::sleep(Duration::from_millis(700)).await;
+
     let dur = Duration::from_secs_f64(interval.max(0.5));
     let f = |v: Option<f64>, u: &str| v.map(|x| format!("{x:.1}{u}")).unwrap_or_else(|| "—".into());
+    let mut lat_hist: VecDeque<Option<f64>> = VecDeque::with_capacity(SPARK_CAPACITY);
+    let mut bw_hist: VecDeque<Option<f64>> = VecDeque::with_capacity(SPARK_CAPACITY);
+    let mut prev_route_hash: Option<String> = None;
+
     loop {
         let targets = store.latest_per_target().await?;
         let gateway = store.latest_gateway().await?;
         let h1 = store.reliability_since(now_ms() - 3_600_000).await?;
         let d1 = store.reliability_since(now_ms() - 86_400_000).await?;
         let qoe = store.qoe_average_since(now_ms() - 1_800_000).await?;
+        let wifi = store.latest_wifi().await?;
+        let bandwidth = store.latest_bandwidth().await?;
+        let security = store.latest_security().await?;
+        let devices = store.list_devices().await?;
+        let route = store.latest_traceroute().await?;
+        let dns = store.dns_comparison(now_ms() - 3_600_000).await?;
+        let events = store.recent_events(3).await?;
+
         let up = targets.iter().filter(|t| t.up == Some(true)).count();
         let online = up > 0;
+        let avg_latency = {
+            let ups: Vec<f64> = targets.iter().filter_map(|t| t.rtt_avg).collect();
+            if ups.is_empty() { None } else { Some(ups.iter().sum::<f64>() / ups.len() as f64) }
+        };
+        push_sample(&mut lat_hist, avg_latency);
+        push_sample(&mut bw_hist, bandwidth.as_ref().map(|b| b.rx_bps as f64));
+        let route_change = route
+            .as_ref()
+            .map(|r| route_changed(&mut prev_route_hash, &r.route_hash))
+            .unwrap_or(false);
 
         let mut buf = String::new();
         buf.push_str("\x1b[2J\x1b[H"); // clear screen + cursor home
@@ -362,36 +403,143 @@ async fn watch(store: &Store, interval: f64) -> Result<(), Box<dyn Error>> {
             up,
             targets.len()
         ));
-        for t in &targets {
-            let state = match t.up {
-                Some(true) => format!("{:.1} ms", t.rtt_avg.unwrap_or(0.0)),
-                Some(false) => "down".to_string(),
-                None => "—".to_string(),
-            };
-            buf.push_str(&format!("    {:14} {:24} {}\n", t.label, t.host, state));
+
+        if sections.contains("status") {
+            for t in &targets {
+                let state = match t.up {
+                    Some(true) => format!("{:.1} ms", t.rtt_avg.unwrap_or(0.0)),
+                    Some(false) => "down".to_string(),
+                    None => "—".to_string(),
+                };
+                buf.push_str(&format!("    {:14} {:24} {}\n", t.label, t.host, state));
+            }
+            if let Some(g) = &gateway {
+                buf.push_str(&format!(
+                    "  gateway: {} · loss {}\n",
+                    g.gateway_rtt_ms.map(|v| format!("{v:.2} ms")).unwrap_or_else(|| "—".into()),
+                    g.lan_loss_pct.map(|v| format!("{v:.0}%")).unwrap_or_else(|| "—".into()),
+                ));
+            }
         }
-        if let Some(g) = gateway {
+
+        if sections.contains("reliability") {
             buf.push_str(&format!(
-                "  gateway: {} · loss {}\n",
-                g.gateway_rtt_ms.map(|v| format!("{v:.2} ms")).unwrap_or_else(|| "—".into()),
-                g.lan_loss_pct.map(|v| format!("{v:.0}%")).unwrap_or_else(|| "—".into()),
+                "\n  last 1h : uptime {:.1}%  lat {}  loss {}\n",
+                h1.uptime_pct, f(h1.avg_latency_ms, " ms"), f(h1.avg_loss_pct, "%"),
+            ));
+            buf.push_str(&format!(
+                "  last 24h: uptime {:.1}%  lat {}  loss {}  disconnects {}\n",
+                d1.uptime_pct, f(d1.avg_latency_ms, " ms"), f(d1.avg_loss_pct, "%"), d1.disconnects,
             ));
         }
-        buf.push_str(&format!(
-            "\n  last 1h : uptime {:.1}%  lat {}  loss {}\n",
-            h1.uptime_pct, f(h1.avg_latency_ms, " ms"), f(h1.avg_loss_pct, "%"),
-        ));
-        buf.push_str(&format!(
-            "  last 24h: uptime {:.1}%  lat {}  loss {}  disconnects {}\n",
-            d1.uptime_pct, f(d1.avg_latency_ms, " ms"), f(d1.avg_loss_pct, "%"), d1.disconnects,
-        ));
-        if let Some(q) = qoe {
-            let g = |v: Option<f64>| v.map(|x| format!("{x:.0}")).unwrap_or_else(|| "—".into());
-            buf.push_str(&format!(
-                "  QoE(30m): gaming {} · voip {} · video {} · streaming {} · web {}\n",
-                g(q.gaming), g(q.voip), g(q.video_call), g(q.streaming), g(q.web),
-            ));
+
+        if sections.contains("qoe") {
+            if let Some(q) = &qoe {
+                let g = |v: Option<f64>| v.map(|x| format!("{x:.0}")).unwrap_or_else(|| "—".into());
+                buf.push_str(&format!(
+                    "  QoE(30m): gaming {} · voip {} · video {} · streaming {} · web {}\n",
+                    g(q.gaming), g(q.voip), g(q.video_call), g(q.streaming), g(q.web),
+                ));
+            }
         }
+
+        if sections.contains("sparkline") {
+            buf.push_str(&format!("\n  latency   {}\n", sparkline(&lat_hist)));
+            buf.push_str(&format!("  bandwidth {}\n", sparkline(&bw_hist)));
+        }
+
+        if sections.contains("wifi") {
+            buf.push('\n');
+            match &wifi {
+                Some(w) => buf.push_str(&format!(
+                    "  wifi: {} · {} · {}\n",
+                    w.ssid.as_deref().unwrap_or("?"),
+                    w.rssi_dbm.map(|v| format!("{v} dBm")).unwrap_or_else(|| "—".into()),
+                    w.link_speed_mbps.map(|v| format!("{v:.0} Mbps")).unwrap_or_else(|| "—".into()),
+                )),
+                None => buf.push_str("  wifi: not connected to Wi-Fi\n"),
+            }
+        }
+
+        if sections.contains("bandwidth") {
+            match &bandwidth {
+                Some(b) => buf.push_str(&format!(
+                    "  bandwidth: ↓ {:.1} Mbps · ↑ {:.1} Mbps\n",
+                    b.rx_bps as f64 / 1e6,
+                    b.tx_bps as f64 / 1e6,
+                )),
+                None => buf.push_str("  bandwidth: no samples yet\n"),
+            }
+        }
+
+        if sections.contains("security") {
+            match &security {
+                Some(s) => buf.push_str(&format!(
+                    "  security: vpn {} · firewall {} · doh {} · dot {}\n",
+                    tri(s.vpn_detected), tri(s.firewall_active), tri(s.doh_active), tri(s.dot_active),
+                )),
+                None => buf.push_str("  security: no snapshot yet\n"),
+            }
+        }
+
+        if sections.contains("devices") {
+            let active: Vec<_> = devices.iter().filter(|d| d.is_active).collect();
+            buf.push_str(&format!("  devices: {} online\n", active.len()));
+            for d in active.iter().take(8) {
+                buf.push_str(&format!(
+                    "    {:16} {}\n",
+                    d.ip.as_deref().unwrap_or("?"),
+                    d.hostname.as_deref().unwrap_or_else(|| d.mac.as_deref().unwrap_or("")),
+                ));
+            }
+            if active.len() > 8 {
+                buf.push_str(&format!("    +{} more\n", active.len() - 8));
+            }
+        }
+
+        if sections.contains("route") {
+            match &route {
+                Some(r) => {
+                    let last_rtt = r.hops.last().and_then(|h| h.rtt_ms);
+                    buf.push_str(&format!(
+                        "  route: {} hops to {}{}{}\n",
+                        r.hop_count,
+                        r.target,
+                        last_rtt.map(|v| format!(" · last hop {v:.1}ms")).unwrap_or_default(),
+                        if route_change { " · route changed" } else { "" },
+                    ));
+                }
+                None => buf.push_str("  route: no traceroute yet\n"),
+            }
+        }
+
+        if sections.contains("dns") {
+            if dns.is_empty() {
+                buf.push_str("  dns: no samples yet\n");
+            } else {
+                for s in &dns {
+                    buf.push_str(&format!(
+                        "  dns: {:12} {:>8}  {} lookups, {} failures\n",
+                        s.resolver,
+                        s.avg_ms.map(|v| format!("{v:.1}ms")).unwrap_or_else(|| "—".into()),
+                        s.count,
+                        s.failures,
+                    ));
+                }
+            }
+        }
+
+        if sections.contains("events") {
+            buf.push_str("\n  recent events:\n");
+            if events.is_empty() {
+                buf.push_str("    none yet\n");
+            } else {
+                for e in &events {
+                    buf.push_str(&format!("    {}  {:12} {}\n", fmt_ts(e.ts), e.kind, e.severity));
+                }
+            }
+        }
+
         print!("{buf}");
         std::io::stdout().flush().ok();
 
@@ -401,6 +549,15 @@ async fn watch(store: &Store, interval: f64) -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+/// Format an `Option<bool>` as a compact yes/no/unknown tri-state string.
+fn tri(v: Option<bool>) -> &'static str {
+    match v {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "—",
+    }
 }
 
 async fn report(
