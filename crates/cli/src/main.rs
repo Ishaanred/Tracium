@@ -318,6 +318,27 @@ fn route_changed(prev_hash: &mut Option<String>, current_hash: &str) -> bool {
     changed
 }
 
+/// One-time ASCII splash printed before the refresh loop starts. Purely
+/// cosmetic — has no per-tick cost, unlike everything else in `watch()`.
+fn print_banner(db: &std::path::Path, interval: f64, sections: &std::collections::HashSet<&str>) {
+    println!(
+        r#"
+  _______ _____            _____ _____ _    _ __  __
+ |__   __|  __ \     /\   / ____|_   _| |  | |  \/  |
+    | |  | |__) |   /  \ | |      | | | |  | | \  / |
+    | |  |  _  /   / /\ \| |      | | | |  | | |\/| |
+    | |  | | \ \  / ____ \ |____ _| |_| |__| | |  | |
+    |_|  |_|  \_\/_/    \_\_____|_____|\____/|_|  |_|
+"#
+    );
+    let mut names: Vec<&str> = SECTION_KEYS.iter().copied().filter(|k| sections.contains(k)).collect();
+    names.sort();
+    println!("  traciumd {} — live watch", env!("CARGO_PKG_VERSION"));
+    println!("  db:       {}", db.display());
+    println!("  refresh:  {interval:.1}s");
+    println!("  sections: {}\n", names.join(", "));
+}
+
 /// Live in-place dashboard. Read-only, so it runs happily alongside the daemon.
 async fn watch(store: &Store, interval: f64) -> Result<(), Box<dyn Error>> {
     use std::io::Write;
